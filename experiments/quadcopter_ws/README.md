@@ -3,7 +3,7 @@ How to build and run:
 Build:
 
 First need to install pynput for keyboard monitoring
-sudo apt-get install python-pip3
+sudo apt-get install python3-pip
 pip3 install pynput --break-system-packages
 
 colcon build --packages-select quadcopter_keyboard_control
