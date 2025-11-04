@@ -207,6 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 # Colcon
-*/build/*
-*/install/*
-*/log/*
+**/build/*
+**/install/*
+**/log/*
