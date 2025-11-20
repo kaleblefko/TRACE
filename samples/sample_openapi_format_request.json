@@ -1,0 +1,21 @@
+{
+  "model": "model",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Describe this image." },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "file:///absolute/path/to/image.jpg"
+          }
+        }
+      ]
+    }
+  ]
+}

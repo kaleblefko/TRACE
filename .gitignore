@@ -210,3 +210,7 @@ __marimo__/
 **/build/*
 **/install/*
 **/log/*
+
+# User Added
+dog.jpg
+/old
