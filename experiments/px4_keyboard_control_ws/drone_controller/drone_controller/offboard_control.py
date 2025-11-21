@@ -165,7 +165,7 @@ class PX4KeyboardController(Node):
 
     def update_position_setpoint(self):
         """Update target position based on keyboard input"""
-        if not self.motors_on or not self.armed:
+        if not self.motors_on:
             return
         
         dt = 0.05  # 20Hz = 0.05s
