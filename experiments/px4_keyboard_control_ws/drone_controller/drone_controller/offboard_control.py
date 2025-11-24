@@ -55,8 +55,8 @@ class PX4KeyboardController(Node):
         # Position tracking (NED frame)
         self.pos_x = 0.0  # North
         self.pos_y = 0.0  # East
-        self.pos_z = -5.0  # Down (negative = up, start at 5m altitude)
-        self.yaw = 0.0
+        self.pos_z = -1.0  # Down (negative = up, start at 5m altitude)
+        self.yaw = 1.787
         
         # Speed parameters
         self.declare_parameter('linear_speed', 2.0)
@@ -172,15 +172,15 @@ class PX4KeyboardController(Node):
         
         # Forward/Backward (X - North/South in NED)
         if 'w' in self.active_keys:
-            self.pos_x += self.linear_speed * dt
+            self.pos_y += self.linear_speed * dt
         elif 's' in self.active_keys:
-            self.pos_x -= self.linear_speed * dt
+            self.pos_y -= self.linear_speed * dt
         
         # Left/Right (Y - East/West in NED)
         if 'a' in self.active_keys:
-            self.pos_y -= self.linear_speed * dt  # West is negative
+            self.pos_x += self.linear_speed * dt  # West is negative
         elif 'd' in self.active_keys:
-            self.pos_y += self.linear_speed * dt  # East is positive
+            self.pos_x -= self.linear_speed * dt  # East is positive
         
         # Up/Down (Z - Down is positive in NED, so inverted)
         if 'r' in self.active_keys:
