@@ -7,17 +7,12 @@ import cv2
 frame = 0
 
 def image_callback(msg: Image):
-    global frame
-    frame += 1
-    
-    if frame % 10 != 0:
-        return
-    
-    print(msg.data)
     img = np.frombuffer(msg.data, dtype=np.uint8)
     img = img.reshape((msg.height, msg.width, 3))
+    img = img[:, :, ::-1]
 
-    cv2.imshow("PX4 Downward Camera", img)
+    img_small = cv2.resize(img, (320, 240))
+    cv2.imshow("PX4 Downward Camera", img_small)
     cv2.waitKey(1)
 
 node = Node()
