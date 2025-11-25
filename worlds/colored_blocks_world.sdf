@@ -91,9 +91,9 @@
       <elevation>0</elevation>
     </spherical_coordinates>
 
-    <model name="blue_block">
-        <static>false</static>
-        <pose>2 0 0.2 0 0 0</pose>
+    <model name="blue_block1">
+        <static>true</static>
+        <pose>2 0 0.1 0 0 0</pose>
         <link name="link">
             <visual name="visual">
                 <geometry>
@@ -114,8 +114,8 @@
         </link>
     </model>
 
-    <model name="green_block">
-        <static>false</static>
+    <model name="green_block1">
+        <static>true</static>
         <pose>4 0 0.1 0 0 0</pose>
         <link name="link">
             <visual name="visual">
@@ -135,6 +135,75 @@
                 </geometry>
             </collision>
         </link>
+    </model>
+
+    <model name="blue_block2">
+      <static>true</static>
+      <pose>4 -2 0.1 0 0 0</pose>
+      <link name="link">
+          <visual name="visual">
+              <geometry>
+                  <box><size>1 1 0.2</size></box> 
+              </geometry>
+              <material>
+                  <ambient>0 0 1 1</ambient>
+                  <diffuse>0 0 1 1</diffuse>
+              </material>
+          </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="blue_block3">
+      <static>true</static>
+      <pose>6 -2 0.1 0 0 0</pose>
+      <link name="link">
+          <visual name="visual">
+              <geometry>
+                  <box><size>1 1 0.2</size></box> 
+              </geometry>
+              <material>
+                  <ambient>0 0 1 1</ambient>
+                  <diffuse>0 0 1 1</diffuse>
+              </material>
+          </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="purple_block1">
+      <static>true</static>
+      <pose>8 -2 0.1 0 0 0</pose>
+      <link name="link">
+          <visual name="visual">
+              <geometry>
+                  <box><size>1 1 0.2</size></box> 
+              </geometry>
+              <material>
+                  <ambient>1 0 1 1</ambient>
+                  <diffuse>1 0 1 1</diffuse>
+              </material>
+          </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
     </model>
 
     </world>
