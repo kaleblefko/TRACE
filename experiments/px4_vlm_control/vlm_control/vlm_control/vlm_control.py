@@ -152,20 +152,22 @@ class PX4VLMController(Node):
     def update_flight_phase(self):
         """Update position setpoint based on flight phase"""
         if self.phase == "LAUNCH":
-            if self.pos_z > -2.0:
+            if self.pos_z > -1.0:
                 self.pos_z -= 0.05
             else:
-                self.pos_z = -2.0
-                self.phase = "START"
-                self.get_logger().info(f"LAUNCH complete at altitude 2m. Moving to START phase...")
+                self.pos_z = -1.0
+                self.prev_phase = "LAUNCH"
+                self.phase = "HOVER"
+                self.get_logger().info(f"LAUNCH complete at altitude 1m. Moving to START phase...")
         
         elif self.phase == "START":
             if self.pos_y < 2.0:
                 self.pos_y += 0.05
             else:
                 self.pos_y = 2.0
+                self.prev_phase = "START"
                 self.phase = "HOVER"
-                self.get_logger().info(f"START complete at position [0, 2, -2]. Ready for VLM...")
+                self.get_logger().info(f"START complete at position [0, 2, -1]. Ready for VLM...")
 
         elif self.phase == "VLM":
             # Process VLM command once
@@ -213,10 +215,13 @@ class PX4VLMController(Node):
                 time_remaining = 10 - (self.hover_counter / 20)
                 self.get_logger().info(f"HOVER: {time_remaining:.1f} seconds remaining...")
             
-            if self.hover_counter >= 100:  # 15 seconds at 20Hz = 300 iterations
+            if self.hover_counter >= 200:  # 15 seconds at 20Hz = 300 iterations
                 self.get_logger().info("HOVER complete. Returning to VLM phase...")
                 del self.hover_counter
-                self.phase = "VLM"
+                if self.prev_phase == "START":
+                    self.phase = "LAUNCH"
+                else:
+                    self.phase = "VLM"
 
     def process_vlm_command(self):
         """Process VLM command using latest camera image"""
