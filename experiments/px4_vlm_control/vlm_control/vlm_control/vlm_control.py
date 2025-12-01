@@ -218,8 +218,8 @@ class PX4VLMController(Node):
             if self.hover_counter >= 200:  # 15 seconds at 20Hz = 300 iterations
                 self.get_logger().info("HOVER complete. Returning to VLM phase...")
                 del self.hover_counter
-                if self.prev_phase == "START":
-                    self.phase = "LAUNCH"
+                if self.prev_phase == "LAUNCH":
+                    self.phase = "START"
                 else:
                     self.phase = "VLM"
 
@@ -240,6 +240,8 @@ class PX4VLMController(Node):
                 return
             
             img_b64 = base64.b64encode(buffer).decode("utf-8")
+            self.publish_offboard_control_mode()
+            self.publish_trajectory_setpoint()
             
             # Call VLM API
             uri = f"http://{os.getenv('OLLAMA_ENDPOINT')}/api/chat"
@@ -272,6 +274,8 @@ class PX4VLMController(Node):
             
             self.get_logger().info("Sending request to VLM...")
             response = requests.post(uri, json=data, stream=True, timeout=10)
+            self.publish_offboard_control_mode()
+            self.publish_trajectory_setpoint()
             
             full_reply = ""
             for line in response.iter_lines():
@@ -308,6 +312,8 @@ class PX4VLMController(Node):
             else:
                 self.get_logger().warn(f"Unknown command: {command}, staying in VLM phase")
                 self.vlm_processing = False
+            self.publish_offboard_control_mode()
+            self.publish_trajectory_setpoint()
                 
         except Exception as e:
             self.get_logger().error(f"VLM processing error: {e}")
