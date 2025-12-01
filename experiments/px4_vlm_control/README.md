@@ -12,8 +12,9 @@ See .env.example for an example .env file<br>
 
 Terminal 1:
 
+cp ~/TRACE/worlds/colored_blocks_world.sdf ~/PX4-Autopilot/Tools/simulation/gz/worlds/
 cd PX4-Autopilot
-PX4_GZ_WORLD=colored_blocks_world make px4_sitl gz_x500_mono_cam_world
+PX4_GZ_WORLD=colored_blocks_world make px4_sitl gz_x500_mono_cam_down
 
 Terminal 2:
 MicroXRCEAgent udp4 -p 8888
