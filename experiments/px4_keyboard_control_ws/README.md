@@ -6,6 +6,9 @@ cp worlds/colored_blocks_world.sdf ~/PX4_Autpilot/Tools/simulation/gz/worlds/
 ## Terminal 1:
 PX4_GZ_WORLD=colored_blocks_world make px4_sitl gz_x500_mono_cam_down<br>
 Once this is done starting up, in that terminal type<br>
+param set CBRK_SUPPLY_CHK 894248
+param set COM_ARM_WO_GPS 1
+param set NAV_RCL_ACT 0
 param set NAV_DLL_ACT 0 (It should then say in green Ready for takeoff!)
 
 ## Terminal 2:
