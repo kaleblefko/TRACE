@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'vlm_control = vlm_control.vlm_control:main'
+            'vlm_control_arrows = vlm_control.vlm_control_arrows:main'
         ],
     },
 )
