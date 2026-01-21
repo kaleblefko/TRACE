@@ -1,0 +1,305 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+    <world name="arrows">
+        <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg> 8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <model name="up_arrow1">
+        <static>true</static>
+        <pose degrees="true">2 0 0 0 0 0</pose>
+        <link name="link">
+            <visual name="arrow_visual">
+                <pose>0 0 0.01 0 0 0</pose>
+                <geometry>
+                    <box><size>1 1 0.001</size></box>
+                </geometry>
+                <material>
+                    <ambient>1 1 1 1</ambient>
+                    <diffuse>1 1 1 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                    <pbr>
+                        <metal>
+                            <albedo_map>model://arrow_materials/materials/textures/arrow_block1.png</albedo_map>
+                        </metal>
+                    </pbr>
+                </material>
+            </visual>
+            <collision name="collision">
+                <geometry>
+                    <box>
+                        <size>1 1 0.2</size>
+                    </box>
+                </geometry>
+            </collision>
+        </link>
+    </model>
+
+    <model name="right_arrow1">
+        <static>true</static>
+        <pose degrees="true">4 0 0 0 0 -90</pose>
+        <link name="link">
+            <visual name="arrow_visual">
+                <pose>0 0 0.01 0 0 0</pose>
+                <geometry>
+                    <box><size>1 1 0.001</size></box>
+                </geometry>
+                <material>
+                    <ambient>1 1 1 1</ambient>
+                    <diffuse>1 1 1 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                    <pbr>
+                        <metal>
+                            <albedo_map>model://arrow_materials/materials/textures/arrow_block2.png</albedo_map>
+                        </metal>
+                    </pbr>
+                </material>
+            </visual>
+            <collision name="collision">
+                <geometry>
+                    <box>
+                        <size>1 1 0.2</size>
+                    </box>
+                </geometry>
+            </collision>
+        </link>
+    </model>
+
+    <model name="up_arrow2">
+      <static>true</static>
+      <pose>4 -2 0 0 0 0</pose>
+      <link name="link">
+            <visual name="arrow_visual">
+                <pose>0 0 0.01 0 0 0</pose>
+                <geometry>
+                    <box><size>1 1 0.001</size></box>
+                </geometry>
+                <material>
+                    <ambient>1 1 1 1</ambient>
+                    <diffuse>1 1 1 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                    <pbr>
+                        <metal>
+                            <albedo_map>model://arrow_materials/materials/textures/arrow_block3.png</albedo_map>
+                        </metal>
+                    </pbr>
+                </material>
+            </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="up_arrow3">
+      <static>true</static>
+      <pose>6 -2 0 0 0 0</pose>
+      <link name="link">
+        <visual name="arrow_visual">
+            <pose>0 0 0.01 0 0 0</pose>
+            <geometry>
+                <box><size>1 1 0.001</size></box>
+            </geometry>
+            <material>
+                <ambient>1 1 1 1</ambient>
+                <diffuse>1 1 1 1</diffuse>
+                <specular>1 1 1 1</specular>
+                <pbr>
+                    <metal>
+                        <albedo_map>model://arrow_materials/materials/textures/arrow_block4.png</albedo_map>
+                    </metal>
+                </pbr>
+            </material>
+        </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="left_arrow1">
+      <static>true</static>
+      <pose>8 -2 0 0 0 0</pose>
+      <link name="link">
+        <visual name="arrow_visual">
+            <pose degrees="true">0 0 0.01 0 0 90</pose>
+            <geometry>
+                <box><size>1 1 0.001</size></box>
+            </geometry>
+            <material>
+                <ambient>1 1 1 1</ambient>
+                <diffuse>1 1 1 1</diffuse>
+                <specular>1 1 1 1</specular>
+                <pbr>
+                    <metal>
+                        <albedo_map>model://arrow_materials/materials/textures/arrow_block5.png</albedo_map>
+                    </metal>
+                </pbr>
+            </material>
+        </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="up_arrow4">
+      <static>true</static>
+      <pose>8 0 0 0 0 0</pose>
+      <link name="link">
+        <visual name="arrow_visual">
+            <pose>0 0 0.01 0 0 0</pose>
+            <geometry>
+                <box><size>1 1 0.001</size></box>
+            </geometry>
+            <material>
+                <ambient>1 1 1 1</ambient>
+                <diffuse>1 1 1 1</diffuse>
+                <specular>1 1 1 1</specular>
+                <pbr>
+                    <metal>
+                        <albedo_map>model://arrow_materials/materials/textures/arrow_block6.png</albedo_map>
+                    </metal>
+                </pbr>
+            </material>
+        </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    <model name="left_arrow2">
+      <static>true</static>
+      <pose>10 0 0 0 0 0</pose>
+      <link name="link">
+        <visual name="arrow_visual">
+            <pose degrees="true">0 0 0.01 0 0 90</pose>
+            <geometry>
+                <box><size>1 1 0.001</size></box>
+            </geometry>
+            <material>
+                <ambient>1 1 1 1</ambient>
+                <diffuse>1 1 1 1</diffuse>
+                <specular>1 1 1 1</specular>
+                <pbr>
+                    <metal>
+                        <albedo_map>model://arrow_materials/materials/textures/arrow_block7.png</albedo_map>
+                    </metal>
+                </pbr>
+            </material>
+        </visual>
+          <collision name="collision">
+              <geometry>
+                  <box>
+                      <size>1 1 0.2</size>
+                  </box>
+              </geometry>
+          </collision>
+      </link>
+    </model>
+
+    </world>
+</sdf>

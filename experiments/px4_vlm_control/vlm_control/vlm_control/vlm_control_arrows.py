@@ -76,7 +76,7 @@ class PX4VLMController(Node):
         
         # Gazebo camera setup
         self.gz_node = GzNode()
-        self.camera_topic = "/world/colored_blocks_world/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
+        self.camera_topic = "/world/arrows/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
         self.latest_image = None
         self.gz_node.subscribe(GzImage, self.camera_topic, self.gz_image_callback)
         
