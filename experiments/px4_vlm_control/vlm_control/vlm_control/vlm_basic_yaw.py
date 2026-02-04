@@ -83,7 +83,7 @@ class PX4VLMController(Node):
         
         # Gazebo camera setup
         self.gz_node = GzNode()
-        self.camera_topic = "/world/colored_blocks_world/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
+        self.camera_topic = "/world/arrows/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
         self.latest_image = None
         self.gz_node.subscribe(GzImage, self.camera_topic, self.gz_image_callback)
         
@@ -353,12 +353,12 @@ class PX4VLMController(Node):
             elif "right" in command:
                 self.move_command = "right"
                 # Turn 90 degrees right (negative rotation in NED frame)
-                self.target_yaw = self.yaw - (np.pi / 2.0)
+                self.target_yaw = self.yaw + (np.pi / 2.0)
 
             elif "left" in command:
                 self.move_command = "left"
                 # Turn 90 degrees left (positive rotation)
-                self.target_yaw = self.yaw + (np.pi / 2.0)
+                self.target_yaw = self.yaw - (np.pi / 2.0)
 
             else:
                 self.get_logger().warn(f"Unknown command: {command}, staying in VLM phase")
