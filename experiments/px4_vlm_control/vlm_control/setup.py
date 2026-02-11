@@ -24,8 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'vlm_control = vlm_control.vlm_control:main'
-            'vlm_control_arrows = vlm_control.vlm_control_arrows:main'
+            'vlm_control = vlm_control.vlm_control:main',
+            'vlm_control_arrows = vlm_control.vlm_control_arrows:main',
             'vlm_basic_yaw = vlm_control.vlm_basic_yaw:main'
         ],
     },
