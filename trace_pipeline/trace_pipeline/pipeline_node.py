@@ -75,10 +75,15 @@ class TRACEPipeline(Node):
         self.vlm_processing = False
         
         # Gazebo camera setup
-        self.gz_node = GzNode()
-        self.camera_topic = "/world/arrows/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
+        self.cam_node = GzNode()
+        self.camera_topic = "/world/small_house/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
         self.latest_image = None
-        self.gz_node.subscribe(GzImage, self.camera_topic, self.gz_image_callback)
+        self.cam_node.subscribe(GzImage, self.camera_topic, self.gz_image_callback)
+
+        self.depth_node = GzNode()
+        self.depth_topic = "/depth_camera"
+        self.latest_depth_info = None
+        self.depth_node.subscribe(GzImage, self.depth_topic, self.gz_depth_callback)
         
         # Control loop timer at 20Hz (always running for offboard mode)
         self.control_timer = self.create_timer(0.05, self.control_loop)
@@ -102,6 +107,28 @@ class TRACEPipeline(Node):
             img = img.reshape((msg.height, msg.width, 3))
             img = img[:, :, ::-1]  # BGR to RGB
             self.latest_image = cv2.resize(img, (320, 240))
+        except Exception as e:
+            self.get_logger().error(f"Error processing image: {e}")
+
+    def gz_depth_callback(self, msg: GzImage):
+        try:
+            # Depth data is R_FLOAT32 - single channel, 32-bit float
+            depth_data = np.frombuffer(msg.data, dtype=np.float32)
+            depth_img = depth_data.reshape((msg.height, msg.width))
+            
+            # Normalize depth for visualization (0-10 meters range)
+            # Clip values beyond 10m and scale to 0-255
+            depth_normalized = np.clip(depth_img, 0, 10.0) / 10.0 * 255
+            depth_vis = depth_normalized.astype(np.uint8)
+            
+            # Apply colormap for better visualization
+            depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+
+            # Also show raw depth values at center pixel
+            center_depth = depth_img[msg.height//2, msg.width//2]
+
+            self.latest_depth_info = {"img": depth_colored, "depth": center_depth}
+
         except Exception as e:
             self.get_logger().error(f"Error processing image: {e}")
 
