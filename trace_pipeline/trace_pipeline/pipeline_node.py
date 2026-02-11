@@ -15,7 +15,7 @@ import os
 from dotenv import load_dotenv
 
 
-class PX4VLMController(Node):
+class TRACEPipeline(Node):
     def __init__(self):
         super().__init__('px4_vlm_controller')
         
@@ -418,7 +418,7 @@ def main(args=None):
     rclpy.init(args=args)
     env_path = os.path.expanduser('~/TRACE/.env')
     load_dotenv(dotenv_path=env_path)
-    controller = PX4VLMController()
+    controller = TRACEPipeline()
     
     try:
         rclpy.spin(controller)
