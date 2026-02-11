@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'pipeline_node = pipeline_node.pipeline_node:main'
+            'pipeline_node = trace_pipeline.pipeline_node:main'
         ],
     },
 )

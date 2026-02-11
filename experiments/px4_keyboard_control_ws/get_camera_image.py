@@ -16,7 +16,7 @@ def image_callback(msg: Image):
     cv2.waitKey(1)
 
 node = Node()
-topic = "/world/colored_blocks_world/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
+topic = "/world/small_house/model/trace_drone_0/model/mono_cam/link/camera_link/sensor/camera/image"
 
 print("Subscribing to:", topic)
 node.subscribe(msg_type=Image, topic=topic, callback=image_callback)
