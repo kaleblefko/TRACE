@@ -60,9 +60,11 @@ class VLMNode(Node):
     # ------------------------------------------------------------------
     def control_loop(self):
         self.vlm_check_counter += 1
-        if (self.vlm_check_counter % self.vlm_check_interval == 0
-                and not self.vlm_processing):
+        if not self.vlm_processing:
             self.check_for_blue_ball_vlm()
+        # if (self.vlm_check_counter % self.vlm_check_interval == 0
+        #         and not self.vlm_processing):
+        # self.check_for_blue_ball_vlm()
 
 
     # ------------------------------------------------------------------
