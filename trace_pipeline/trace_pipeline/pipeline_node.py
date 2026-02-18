@@ -106,7 +106,9 @@ class TRACEPipeline(Node):
         # =======================
         self.cam_node = GzNode()
         # Use your existing camera topic from the original script
-        self.camera_topic = "/world/small_house/model/trace_drone_0/model/mono_cam/link/camera_link/sensor/camera/image"
+        # self.camera_topic = "/world/small_house/model/trace_drone_0/model/mono_cam/link/camera_link/sensor/camera/image"
+        self.camera_topic = ""
+
         self.latest_image = None
         self.cam_node.subscribe(GzImage, self.camera_topic, self.gz_image_callback)
 
