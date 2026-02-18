@@ -9,11 +9,13 @@ PX4_GZ_WORLD=small_house make px4_sitl gz_trace_drone
 MicroXRCEAgent udp4 -p 8888
 
 # Terminal 3
+cd ~/TRACE/trace_pipeline
 colcon build
 source install/setup.bash
 ros2 run trace_pipeline vlm_node
 
 # Terminal 4
+cd ~/TRACE/trace_pipeline
 source install/setup.bash
 ros2 run trace_pipeline pipeline_node
 

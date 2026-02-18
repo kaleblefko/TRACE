@@ -56,7 +56,7 @@ class TRACEPipeline(Node):
         # =======================
         self.status_sub = self.create_subscription(
             VehicleStatus,
-            "/fmu/out/vehicle_status",
+            "/fmu/out/vehicle_status_v1",
             self.vehicle_status_callback,
             qos_profile
         )
@@ -205,9 +205,9 @@ class TRACEPipeline(Node):
     def vehicle_status_callback(self, msg: VehicleStatus):
         self.vehicle_status = msg
         if not self.commands_sent:
-            self.armed = (msg.arming_state == VehicleStatus.ARMING_STATE_ARMED)
-            self.offboard_mode = (msg.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD)
-
+            #self.armed = (msg.arming_state == VehicleStatus.ARMING_STATE_ARMED)
+            #self.offboard_mode = (msg.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD)
+            pass
     # =======================
     # Depth helpers
     # =======================
