@@ -18,4 +18,3 @@ source install/setup.bash
 ros2 run trace_pipeline pipeline_node
 
 
-
