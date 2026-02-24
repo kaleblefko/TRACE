@@ -17,4 +17,28 @@ ros2 run trace_pipeline vlm_node
 source install/setup.bash
 ros2 run trace_pipeline pipeline_node
 
-
+# How to Get Custom Drone Working
+cd ~/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes
+ 
+cp 4002_gz_x500_depth 4022_gz_trace_drone
+nano 4022_gz_trace_drone
+When nano opens change the following
+ 
+# @name Gazebo Trace Drone
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=trace_drone}
+ 
+Then nano CMakeLists.txt, add into the arguments of px4_add_romfs_files, "4022_gz_trace_drone". Just scroll in the file and find 4021_gz_x500_flow and add it below.
+ 
+Once done.
+ 
+cd ~/PX4-Autopilot
+rm -rf build/
+make clean
+make px4_sitl
+ 
+After px4 is done building run 
+ 
+cd ~/TRACE
+bash update_px4.sh
+ 
+Then make px4_sitl gz_trace_drone should work.
