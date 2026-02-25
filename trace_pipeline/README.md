@@ -34,6 +34,14 @@ ros2 run trace_pipeline vlm_node
 source install/setup.bash
 ros2 run trace_pipeline pipeline_node
 
+# Terminal 5
+source install/setup.bash
+ros2 run trace_pipeline mapping_node
+
+# Terminal 6 (Optional, if not using VLM node)
+source install /setup.bash
+ros2 run trace_pipeline teleop
+
 # How to Get Custom Drone Working
 cd ~/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes
  
