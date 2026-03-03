@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'pipeline_node = trace_pipeline.pipeline_node:main',
             'vlm_node = trace_pipeline.vlm_node:main',
+            'mapping_node = trace_pipeline.mapping_node:main',
             'teleop = trace_pipeline.teleop:main'
         ],
     },
