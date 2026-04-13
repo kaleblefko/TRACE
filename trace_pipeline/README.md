@@ -34,6 +34,54 @@ ros2 run trace_pipeline vlm_node
 source install/setup.bash
 ros2 run trace_pipeline pipeline_node
 
+# Terminal 5
+if not performed already:
+sudo apt install ros-humble-rtabmap-ros
+
+source install/setup.bash
+ros2 run trace_pipeline mapping_node
+
+# Terminal 6
+ros2 run rtabmap_slam rtabmap \
+  --ros-args \
+  -p subscribe_depth:=true \
+  -p subscribe_rgb:=true \
+  -p subscribe_odom:=true \
+  -p frame_id:=base_link \
+  -p odom_frame_id:=odom \
+  -p approx_sync:=true \
+  -p "Grid/FromDepth:='true'" \
+  -p "Grid/RayTracing:='true'" \
+  -p "Grid/RangeMax:='8.0'" \
+  -p "Grid/RangeMin:='0.2'" \
+  -p "Grid/MaxObstacleHeight:='2.0'" \
+  -p "Grid/MinGroundHeight:='0.1'" \
+  -p "RGBD/AngularUpdate:='0.05'" \
+  -p "RGBD/LinearUpdate:='0.05'" \
+  --remap rgb/image:=/camera/rgb/image_raw \
+  --remap rgb/camera_info:=/camera/rgb/camera_info \
+  --remap depth/image:=/camera/depth/image_raw \
+  --remap depth/camera_info:=/camera/depth/camera_info \
+  --remap odom:=/rtabmap/odom \
+  --remap map:=/slam/occupancy_grid \
+  -- --delete_db_on_start
+
+# Terminal 7
+ros2 run rtabmap_viz rtabmap_viz \
+  --ros-args \
+  -p subscribe_depth:=true \
+  -p subscribe_odom:=true \
+  -p frame_id:=base_link \
+  --remap rgb/image:=/camera/rgb/image_raw \
+  --remap rgb/camera_info:=/camera/rgb/camera_info \
+  --remap depth/image:=/camera/depth/image_raw \
+  --remap depth/camera_info:=/camera/depth/camera_info \
+  --remap odom:=/rtabmap/odom
+
+# Terminal 8 (Optional, if not using VLM node)
+source install/setup.bash
+ros2 run trace_pipeline teleop
+
 # How to Get Custom Drone Working
 cd ~/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes
  
