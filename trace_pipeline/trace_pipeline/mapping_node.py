@@ -1,55 +1,122 @@
 #!/usr/bin/env python3
 """
-mapping_node.py — Standalone occupancy-grid mapping node for TRACE.
+mapping_node.py
 
-Inputs
-------
-  /depth_camera          (gz.msgs10.image_pb2.Image, via Gazebo transport)
-      Raw depth frames from the OakD-Lite depth camera.
+Single bridge node feeding RTAB-Map everything it needs:
+  - PX4 pose → nav_msgs/Odometry + TF tree
+  - Gazebo depth image → /camera/depth/image_raw + CameraInfo
+  - Gazebo RGB image   → /camera/rgb/image_raw   + CameraInfo
 
-  /fmu/out/vehicle_local_position  (px4_msgs/VehicleLocalPosition)
-      Drone's actual NED position (x, y) and heading (heading) from PX4.
+Subscribes (PX4):
+  /fmu/out/vehicle_local_position_v1  (px4_msgs/VehicleLocalPosition)
+  /fmu/out/vehicle_attitude           (px4_msgs/VehicleAttitude)
 
-Outputs
--------
-  /slam/occupancy_grid   (nav_msgs/OccupancyGrid)
-      2-D occupancy map published at ~1 Hz.
+Subscribes (Gazebo transport):
+  /depth_camera
+  /world/small_house/model/trace_drone_0/model/mono_cam/...
 
-  /slam/map_image        (sensor_msgs/Image, bgr8)
-      Colourised top-down rendering of the occupancy map at ~1 Hz.
-
-Map colour key
---------------
-  Dark grey  — unknown
-  Grey       — free  (fades darker with age)
-  Red/orange — occupied (fades orange with age)
-  Green      — current drone position
+Publishes:
+  /rtabmap/odom                 (nav_msgs/Odometry)
+  /camera/depth/image_raw       (sensor_msgs/Image,      32FC1)
+  /camera/depth/camera_info     (sensor_msgs/CameraInfo)
+  /camera/rgb/image_raw         (sensor_msgs/Image,      rgb8)
+  /camera/rgb/camera_info       (sensor_msgs/CameraInfo)
+  TF: map → odom → base_link → camera_link
 """
 
-import math
-
+<<<<<<< Updated upstream
 import cv2
+=======
+>>>>>>> Stashed changes
 import numpy as np
+
 import rclpy
-from gz.msgs10.image_pb2 import Image as GzImage
-from gz.transport13 import Node as GzNode
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import Image as RosImage
 from px4_msgs.msg import TrajectorySetpoint
+=======
+=======
+>>>>>>> Stashed changes
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Image, CameraInfo
 
+from gz.msgs10.image_pb2 import Image as GzImage
+from gz.transport13 import Node as GzNode
+
+from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
+
+
+# ---------------------------------------------------------------------------
+# Camera intrinsics (OakD-Lite, from model.sdf)
+# ---------------------------------------------------------------------------
+
+def _make_camera_info(width: int, height: int, hfov_rad: float,
+                      frame_id: str) -> CameraInfo:
+    """Build CameraInfo from image dimensions and horizontal FOV."""
+    fx = (width / 2.0) / np.tan(hfov_rad / 2.0)
+    fy = fx
+    cx = width  / 2.0
+    cy = height / 2.0
+
+    info = CameraInfo()
+    info.header.frame_id = frame_id
+    info.width  = width
+    info.height = height
+    info.distortion_model = 'plumb_bob'
+    info.d = [0.0, 0.0, 0.0, 0.0, 0.0]
+    info.k = [fx,  0.0, cx,
+              0.0, fy,  cy,
+              0.0, 0.0, 1.0]
+    info.r = [1.0, 0.0, 0.0,
+              0.0, 1.0, 0.0,
+              0.0, 0.0, 1.0]
+    info.p = [fx,  0.0, cx,  0.0,
+              0.0, fy,  cy,  0.0,
+              0.0, 0.0, 1.0, 0.0]
+    return info
+<<<<<<< Updated upstream
+
+
+DEPTH_INFO = _make_camera_info(640,  480,  1.274, 'camera_link')
+RGB_INFO   = _make_camera_info(1920, 1080, 1.204, 'camera_link')
+>>>>>>> Stashed changes
+
+
+=======
+
+
+DEPTH_INFO = _make_camera_info(640,  480,  1.274, 'camera_link')
+RGB_INFO   = _make_camera_info(1920, 1080, 1.204, 'camera_link')
+
+
+>>>>>>> Stashed changes
+# ---------------------------------------------------------------------------
+# Bridge node
+# ---------------------------------------------------------------------------
 
 class MappingNode(Node):
-    """Occupancy-grid mapping node, decoupled from the flight controller."""
-
     def __init__(self):
         super().__init__("trace_mapping_node")
 
+<<<<<<< Updated upstream
         # ------------------------------------------------------------------
         # PX4 QoS (must match publisher side)
         # ------------------------------------------------------------------
+=======
+        # =======================
+        # PX4 QoS
+        # =======================
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
         px4_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -57,14 +124,31 @@ class MappingNode(Node):
             depth=1,
         )
 
+<<<<<<< Updated upstream
         # ------------------------------------------------------------------
         # Drone pose — sourced from PX4 actual local position
         # ------------------------------------------------------------------
         self._pos_x: float = 0.0   # NED North (metres)
         self._pos_y: float = 0.0   # NED East  (metres)
         self._yaw:   float = 0.0   # heading   (radians, 0 = North, +CCW)
+=======
+        # =======================
+        # Pose state
+        # =======================
+        self.x = 0.0
+        self.y = 0.0
+        self.z = 0.0
+        self.q = [1.0, 0.0, 0.0, 0.0]   # [w, x, y, z]
+        self.have_position = False
+        self.have_attitude = False
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
 
+        # =======================
+        # PX4 subscribers
+        # =======================
         self.create_subscription(
+<<<<<<< Updated upstream
             TrajectorySetpoint,
             "/fmu/in/trajectory_setpoint",
             self._trajectory_setpoint_callback,
@@ -73,7 +157,7 @@ class MappingNode(Node):
 
         # ------------------------------------------------------------------
         # Depth-camera parameters
-        # (OakD-Lite — https://github.com/PX4/PX4-gazebo-models)
+        # OakD-Lite — https://github.com/PX4/PX4-gazebo-models
         # ------------------------------------------------------------------
         self._cam_hfov   = 1.274   # radians
         self._cam_width  = 640
@@ -112,7 +196,7 @@ class MappingNode(Node):
         )
 
         # ------------------------------------------------------------------
-        # Gazebo depth-camera subscriber (Gazebo transport, not ROS)
+        # Gazebo depth-camera subscriber
         # ------------------------------------------------------------------
         self._depth_gz_node = GzNode()
         self._depth_gz_node.subscribe(
@@ -120,7 +204,7 @@ class MappingNode(Node):
         )
 
         # ------------------------------------------------------------------
-        # Publish map at ~1 Hz independently of depth-frame rate
+        # Publish map at ~1 Hz
         # ------------------------------------------------------------------
         self._map_pub_timer = self.create_timer(1.0, self._publish_map)
 
@@ -152,16 +236,13 @@ class MappingNode(Node):
 
             h, w = depth_img.shape
 
-            # Use a narrow horizontal band around the centre (middle 20% vertically).
-            # Tighten crop_half to reduce noise/artifacts from floor, ceiling, and
-            # lens edges. At 480 px tall, ±10 % = ±48 rows = 96 rows total.
+            # Use a narrow horizontal band around the centre 
             crop_half = max(1, int(h * 0.10))
             row_start = h // 2 - crop_half
             row_end   = h // 2 + crop_half
             band = depth_img[row_start:row_end, :]
 
-            # Crop horizontal FOV edges (~15% each side) to remove lens
-            # distortion artifacts that sweep false obstacles across the map
+            # Crop horizontal FOV edges 
             h_crop = int(band.shape[1] * 0.15)
             band = band[:, h_crop : band.shape[1] - h_crop]
 
@@ -220,12 +301,99 @@ class MappingNode(Node):
 
             obs_x = self._pos_x + depth * math.cos(bearings[c])
             obs_y = self._pos_y + depth * math.sin(bearings[c])
+=======
+            VehicleLocalPosition,
+            '/fmu/out/vehicle_local_position_v1',
+            self._position_callback,
+            px4_qos
+        )
+        self.create_subscription(
+            VehicleAttitude,
+            '/fmu/out/vehicle_attitude',
+            self._attitude_callback,
+            px4_qos
+        )
 
-            obs_cell = self._world_to_grid(obs_x, obs_y)
-            if obs_cell is None:
-                continue
-            obs_col, obs_row = obs_cell
+        # =======================
+        # ROS publishers
+        # =======================
+        self.odom_pub       = self.create_publisher(Odometry,    '/rtabmap/odom',               10)
+        self.depth_pub      = self.create_publisher(Image,       '/camera/depth/image_raw',     10)
+        self.depth_info_pub = self.create_publisher(CameraInfo,  '/camera/depth/camera_info',   10)
+        self.rgb_pub        = self.create_publisher(Image,       '/camera/rgb/image_raw',       10)
+        self.rgb_info_pub   = self.create_publisher(CameraInfo,  '/camera/rgb/camera_info',     10)
 
+        # =======================
+        # TF
+        # =======================
+        self.tf_broadcaster        = tf2_ros.TransformBroadcaster(self)
+        self.static_tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
+        self._publish_static_tfs()
+
+        # =======================
+        # Gazebo transport
+        # =======================
+        self.gz_node = GzNode()
+        self.gz_node.subscribe(GzImage, '/depth_camera', self._depth_callback)
+        self.gz_node.subscribe(
+            GzImage,
+            '/world/small_house/model/trace_drone_0/model/mono_cam'
+            '/link/camera_link/sensor/camera/image',
+            self._rgb_callback
+        )
+
+        # Odometry published at 20 Hz
+        self.create_timer(0.05, self._publish_odom)
+
+        self.get_logger().info('MappingNode started.')
+
+    # =======================
+    # PX4 callbacks
+    # =======================
+
+    def _position_callback(self, msg: VehicleLocalPosition):
+        self.x = float(msg.x)
+        self.y = float(msg.y)
+        self.z = -float(msg.z)   # NED → ENU: negate z
+        self.have_position = True
+
+    def _attitude_callback(self, msg: VehicleAttitude):
+        # NED → ENU quaternion conversion: swap x↔y, negate z
+        self.q = [
+             float(msg.q[0]),   # w unchanged
+             float(msg.q[2]),   # NED y → ENU x
+             float(msg.q[1]),   # NED x → ENU y
+            -float(msg.q[3]),   # negate z
+        ]
+        self.have_attitude = True
+
+    # =======================
+    # Gazebo callbacks
+    # =======================
+
+    def _depth_callback(self, msg: GzImage):
+        try:
+            now = self.get_clock().now().to_msg()
+
+            depth = np.frombuffer(msg.data, dtype=np.float32).reshape(
+                (msg.height, msg.width)
+            )
+
+            ros_img = Image()
+            ros_img.header.stamp    = now
+            ros_img.header.frame_id = 'camera_link'
+            ros_img.height   = msg.height
+            ros_img.width    = msg.width
+            ros_img.encoding = '32FC1'
+            ros_img.step     = msg.width * 4
+            ros_img.data     = depth.tobytes()
+            self.depth_pub.publish(ros_img)
+>>>>>>> Stashed changes
+
+            DEPTH_INFO.header.stamp = now
+            self.depth_info_pub.publish(DEPTH_INFO)
+
+<<<<<<< Updated upstream
             # Raycast: mark all cells before the obstacle as free
             ray_len = max(abs(obs_col - d_col), abs(obs_row - d_row))
             if ray_len < 1:
@@ -241,9 +409,20 @@ class MappingNode(Node):
             valid = (
                 (sample_cols >= 0) & (sample_cols < self._map_cols) &
                 (sample_rows >= 0) & (sample_rows < self._map_rows)
-            )
-            fc, fr = sample_cols[valid], sample_rows[valid]
+=======
+        except Exception as e:
+            self.get_logger().error(f'Depth bridge error: {e}')
 
+    def _rgb_callback(self, msg: GzImage):
+        try:
+            now = self.get_clock().now().to_msg()
+
+            rgb = np.frombuffer(msg.data, dtype=np.uint8).reshape(
+                (msg.height, msg.width, 3)
+>>>>>>> Stashed changes
+            )
+
+<<<<<<< Updated upstream
             # Only mark free if not already confirmed occupied
             free_mask = self._occ_grid[fr, fc] != 100
             self._occ_grid[fr[free_mask], fc[free_mask]] = 0
@@ -257,7 +436,7 @@ class MappingNode(Node):
     # Publishing
     # ------------------------------------------------------------------
     def _publish_map(self) -> None:
-        """Publish the occupancy grid and a colourised map image."""
+        """Publish the occupancy grid and a colorized map image."""
         now = self.get_clock().now().to_msg()
 
         # ---- nav_msgs/OccupancyGrid ----------------------------------------
@@ -288,9 +467,9 @@ class MappingNode(Node):
 
     def _render_map(self) -> np.ndarray:
         """
-        Colourised top-down map rendering.
+        Colorized top-down map rendering.
 
-        Colour scheme
+        Color scheme
         -------------
         Unknown  — dark grey  (40, 40, 40)
         Free     — grey, fades darker with age
@@ -298,7 +477,7 @@ class MappingNode(Node):
         Drone    — bright green 3×3 square
         """
         now_sec = self.get_clock().now().nanoseconds * 1e-9
-        age_max = 30.0  # seconds until a cell reaches its "oldest" colour
+        age_max = 30.0  # seconds until a cell reaches its "oldest" color
 
         img = np.zeros((self._map_rows, self._map_cols, 3), dtype=np.uint8)
 
@@ -334,8 +513,288 @@ class MappingNode(Node):
             r0 = max(0, row - 1);  r1 = min(self._map_rows, row + 2)
             c0 = max(0, col - 1);  c1 = min(self._map_cols, col + 2)
             img[r0:r1, c0:c1] = (0, 255, 0)
+=======
+            ros_img = Image()
+            ros_img.header.stamp    = now
+            ros_img.header.frame_id = 'camera_link'
+            ros_img.height   = msg.height
+            ros_img.width    = msg.width
+            ros_img.encoding = 'rgb8'
+            ros_img.step     = msg.width * 3
+            ros_img.data     = rgb.tobytes()
+            self.rgb_pub.publish(ros_img)
 
-        return img
+            RGB_INFO.header.stamp = now
+            self.rgb_info_pub.publish(RGB_INFO)
+
+        except Exception as e:
+            self.get_logger().error(f'RGB bridge error: {e}')
+
+    # =======================
+    # Odometry + TF
+    # =======================
+=======
+
+        # =======================
+        # PX4 subscribers
+        # =======================
+        self.create_subscription(
+            VehicleLocalPosition,
+            '/fmu/out/vehicle_local_position_v1',
+            self._position_callback,
+            px4_qos
+        )
+        self.create_subscription(
+            VehicleAttitude,
+            '/fmu/out/vehicle_attitude',
+            self._attitude_callback,
+            px4_qos
+        )
+
+        # =======================
+        # ROS publishers
+        # =======================
+        self.odom_pub       = self.create_publisher(Odometry,    '/rtabmap/odom',               10)
+        self.depth_pub      = self.create_publisher(Image,       '/camera/depth/image_raw',     10)
+        self.depth_info_pub = self.create_publisher(CameraInfo,  '/camera/depth/camera_info',   10)
+        self.rgb_pub        = self.create_publisher(Image,       '/camera/rgb/image_raw',       10)
+        self.rgb_info_pub   = self.create_publisher(CameraInfo,  '/camera/rgb/camera_info',     10)
+
+        # =======================
+        # TF
+        # =======================
+        self.tf_broadcaster        = tf2_ros.TransformBroadcaster(self)
+        self.static_tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
+        self._publish_static_tfs()
+
+        # =======================
+        # Gazebo transport
+        # =======================
+        self.gz_node = GzNode()
+        self.gz_node.subscribe(GzImage, '/depth_camera', self._depth_callback)
+        self.gz_node.subscribe(
+            GzImage,
+            '/world/small_house/model/trace_drone_0/model/mono_cam'
+            '/link/camera_link/sensor/camera/image',
+            self._rgb_callback
+        )
+
+        # Odometry published at 20 Hz
+        self.create_timer(0.05, self._publish_odom)
+
+        self.get_logger().info('MappingNode started.')
+
+    # =======================
+    # PX4 callbacks
+    # =======================
+
+    def _position_callback(self, msg: VehicleLocalPosition):
+        self.x = float(msg.x)
+        self.y = float(msg.y)
+        self.z = -float(msg.z)   # NED → ENU: negate z
+        self.have_position = True
+
+    def _attitude_callback(self, msg: VehicleAttitude):
+        # NED → ENU quaternion conversion: swap x↔y, negate z
+        self.q = [
+             float(msg.q[0]),   # w unchanged
+             float(msg.q[2]),   # NED y → ENU x
+             float(msg.q[1]),   # NED x → ENU y
+            -float(msg.q[3]),   # negate z
+        ]
+        self.have_attitude = True
+
+    # =======================
+    # Gazebo callbacks
+    # =======================
+
+    def _depth_callback(self, msg: GzImage):
+        try:
+            now = self.get_clock().now().to_msg()
+
+            depth = np.frombuffer(msg.data, dtype=np.float32).reshape(
+                (msg.height, msg.width)
+            )
+
+            ros_img = Image()
+            ros_img.header.stamp    = now
+            ros_img.header.frame_id = 'camera_link'
+            ros_img.height   = msg.height
+            ros_img.width    = msg.width
+            ros_img.encoding = '32FC1'
+            ros_img.step     = msg.width * 4
+            ros_img.data     = depth.tobytes()
+            self.depth_pub.publish(ros_img)
+
+            DEPTH_INFO.header.stamp = now
+            self.depth_info_pub.publish(DEPTH_INFO)
+
+        except Exception as e:
+            self.get_logger().error(f'Depth bridge error: {e}')
+
+    def _rgb_callback(self, msg: GzImage):
+        try:
+            now = self.get_clock().now().to_msg()
+
+            rgb = np.frombuffer(msg.data, dtype=np.uint8).reshape(
+                (msg.height, msg.width, 3)
+            )
+
+            ros_img = Image()
+            ros_img.header.stamp    = now
+            ros_img.header.frame_id = 'camera_link'
+            ros_img.height   = msg.height
+            ros_img.width    = msg.width
+            ros_img.encoding = 'rgb8'
+            ros_img.step     = msg.width * 3
+            ros_img.data     = rgb.tobytes()
+            self.rgb_pub.publish(ros_img)
+
+            RGB_INFO.header.stamp = now
+            self.rgb_info_pub.publish(RGB_INFO)
+
+        except Exception as e:
+            self.get_logger().error(f'RGB bridge error: {e}')
+
+    # =======================
+    # Odometry + TF
+    # =======================
+
+    def _publish_static_tfs(self):
+        """
+        Publish once-only transforms:
+          map → odom       : identity (no loop closure correction yet)
+          base_link → camera_link : camera mount from model.sdf
+                                    SDF pose .12 .03 .242 (NED x y z)
+                                    → ENU: x=.03 y=.12 z=.242
+        """
+        now = self.get_clock().now().to_msg()
+        tfs = []
+
+        # map → odom
+        t = TransformStamped()
+        t.header.stamp    = now
+        t.header.frame_id = 'map'
+        t.child_frame_id  = 'odom'
+        t.transform.rotation.w = 1.0
+        tfs.append(t)
+
+        # base_link → camera_link
+        tc = TransformStamped()
+        tc.header.stamp    = now
+        tc.header.frame_id = 'base_link'
+        tc.child_frame_id  = 'camera_link'
+        tc.transform.translation.x = 0.03    # ENU x (NED y)
+        tc.transform.translation.y = 0.12    # ENU y (NED x)
+        tc.transform.translation.z = 0.242   # ENU z
+        tc.transform.rotation.w = 1.0
+        tfs.append(tc)
+
+        self.static_tf_broadcaster.sendTransform(tfs)
+
+    def _publish_odom(self):
+        if not (self.have_position and self.have_attitude):
+            return
+
+        now = self.get_clock().now().to_msg()
+        w, x, y, z = self.q
+
+        # nav_msgs/Odometry
+        odom = Odometry()
+        odom.header.stamp    = now
+        odom.header.frame_id = 'odom'
+        odom.child_frame_id  = 'base_link'
+        odom.pose.pose.position.x    = self.x
+        odom.pose.pose.position.y    = self.y
+        odom.pose.pose.position.z    = self.z
+        odom.pose.pose.orientation.w = w
+        odom.pose.pose.orientation.x = x
+        odom.pose.pose.orientation.y = y
+        odom.pose.pose.orientation.z = z
+        self.odom_pub.publish(odom)
+
+        # TF: odom → base_link
+        t = TransformStamped()
+        t.header.stamp    = now
+        t.header.frame_id = 'odom'
+        t.child_frame_id  = 'base_link'
+        t.transform.translation.x = self.x
+        t.transform.translation.y = self.y
+        t.transform.translation.z = self.z
+        t.transform.rotation.w = w
+        t.transform.rotation.x = x
+        t.transform.rotation.y = y
+        t.transform.rotation.z = z
+        self.tf_broadcaster.sendTransform(t)
+>>>>>>> Stashed changes
+
+    def _publish_static_tfs(self):
+        """
+        Publish once-only transforms:
+          map → odom       : identity (no loop closure correction yet)
+          base_link → camera_link : camera mount from model.sdf
+                                    SDF pose .12 .03 .242 (NED x y z)
+                                    → ENU: x=.03 y=.12 z=.242
+        """
+        now = self.get_clock().now().to_msg()
+        tfs = []
+
+        # map → odom
+        t = TransformStamped()
+        t.header.stamp    = now
+        t.header.frame_id = 'map'
+        t.child_frame_id  = 'odom'
+        t.transform.rotation.w = 1.0
+        tfs.append(t)
+
+        # base_link → camera_link
+        tc = TransformStamped()
+        tc.header.stamp    = now
+        tc.header.frame_id = 'base_link'
+        tc.child_frame_id  = 'camera_link'
+        tc.transform.translation.x = 0.03    # ENU x (NED y)
+        tc.transform.translation.y = 0.12    # ENU y (NED x)
+        tc.transform.translation.z = 0.242   # ENU z
+        tc.transform.rotation.w = 1.0
+        tfs.append(tc)
+
+        self.static_tf_broadcaster.sendTransform(tfs)
+
+    def _publish_odom(self):
+        if not (self.have_position and self.have_attitude):
+            return
+>>>>>>> Stashed changes
+
+        now = self.get_clock().now().to_msg()
+        w, x, y, z = self.q
+
+        # nav_msgs/Odometry
+        odom = Odometry()
+        odom.header.stamp    = now
+        odom.header.frame_id = 'odom'
+        odom.child_frame_id  = 'base_link'
+        odom.pose.pose.position.x    = self.x
+        odom.pose.pose.position.y    = self.y
+        odom.pose.pose.position.z    = self.z
+        odom.pose.pose.orientation.w = w
+        odom.pose.pose.orientation.x = x
+        odom.pose.pose.orientation.y = y
+        odom.pose.pose.orientation.z = z
+        self.odom_pub.publish(odom)
+
+        # TF: odom → base_link
+        t = TransformStamped()
+        t.header.stamp    = now
+        t.header.frame_id = 'odom'
+        t.child_frame_id  = 'base_link'
+        t.transform.translation.x = self.x
+        t.transform.translation.y = self.y
+        t.transform.translation.z = self.z
+        t.transform.rotation.w = w
+        t.transform.rotation.x = x
+        t.transform.rotation.y = y
+        t.transform.rotation.z = z
+        self.tf_broadcaster.sendTransform(t)
 
 
 # --------------------------------------------------------------------------
@@ -347,12 +806,20 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         node.get_logger().info("MappingNode shutting down.")
+=======
+        node.get_logger().info('Keyboard interrupt — shutting down MappingNode.')
+>>>>>>> Stashed changes
+=======
+        node.get_logger().info('Keyboard interrupt — shutting down MappingNode.')
+>>>>>>> Stashed changes
     finally:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
