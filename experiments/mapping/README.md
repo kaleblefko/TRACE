@@ -60,9 +60,11 @@ if the drone is not ready for takeoff after these commands, set the following pa
 >MicroXRCEAgent udp4 -p 8888
 
 ## Terminal 3
+>colcon build
+
 >source install/setup.bash
 
->ros2 run trace_pipeline mapping_node
+>ros2 run trace_mapping mapping_node
 
 ## Terminal 4
 >source install/setup.bash
