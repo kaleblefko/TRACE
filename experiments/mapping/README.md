@@ -72,38 +72,6 @@ if the drone is not ready for takeoff after these commands, set the following pa
 >ros2 run trace_pipeline teleop
 
 ## Terminal 5
->ros2 run rtabmap_slam rtabmap \
-  --ros-args \
-  -p subscribe_depth:=true \
-  -p subscribe_rgb:=true \
-  -p subscribe_odom:=true \
-  -p frame_id:=base_link \
-  -p odom_frame_id:=odom \
-  -p approx_sync:=true \
-  -p "Grid/FromDepth:='true'" \
-  -p "Grid/RayTracing:='true'" \
-  -p "Grid/RangeMax:='8.0'" \
-  -p "Grid/RangeMin:='0.2'" \
-  -p "Grid/MaxObstacleHeight:='2.0'" \
-  -p "Grid/MinGroundHeight:='0.1'" \
-  -p "RGBD/AngularUpdate:='0.05'" \
-  -p "RGBD/LinearUpdate:='0.05'" \
-  --remap rgb/image:=/camera/rgb/image_raw \
-  --remap rgb/camera_info:=/camera/rgb/camera_info \
-  --remap depth/image:=/camera/depth/image_raw \
-  --remap depth/camera_info:=/camera/depth/camera_info \
-  --remap odom:=/rtabmap/odom \
-  --remap map:=/slam/occupancy_grid \
-  -- --delete_db_on_start
+>rviz2
 
-## Terminal 6
->ros2 run rtabmap_viz rtabmap_viz \
-  --ros-args \
-  -p subscribe_depth:=true \
-  -p subscribe_odom:=true \
-  -p frame_id:=base_link \
-  --remap rgb/image:=/camera/rgb/image_raw \
-  --remap rgb/camera_info:=/camera/rgb/camera_info \
-  --remap depth/image:=/camera/depth/image_raw \
-  --remap depth/camera_info:=/camera/depth/camera_info \
-  --remap odom:=/rtabmap/odom
+Then add topic -> occupancy grid map
