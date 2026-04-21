@@ -6,23 +6,13 @@
     </include>
     <include>
       <uri>model://OakD-Lite</uri>
-      <pose>.12 .03 .242 0 0 0</pose>
+      <pose>.15 .03 .242 0 0 0</pose>
       <name>depth_cam</name>
     </include>
     <joint name="depth_camera_joint" type="fixed">
       <parent>base_link</parent>
       <child>depth_cam::camera_link</child>
-      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
-    </joint>
-    <include>
-      <uri>model://mono_cam</uri>
-      <pose>0 0 .10 0 1.5707 0</pose>
-      <name>mono_cam</name>
-    </include>
-    <joint name="mono_camera_joint" type="fixed">
-      <parent>base_link</parent>
-      <child>mono_cam::camera_link</child>
-      <pose relative_to="base_link">0 0 0 0 1.5707 0</pose>
+      <pose relative_to="base_link">.15 .03 .242 0 0 0</pose>
     </joint>
   </model>
 </sdf>
