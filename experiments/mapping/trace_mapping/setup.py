@@ -25,7 +25,8 @@ setup(
     entry_points={
         'console_scripts': [
             'teleop = trace_mapping.teleop:main',
-            'mapping = trace_mapping.occupancy_grid_mapper:main'
+            'mapping = trace_mapping.occupancy_grid_mapper:main',
+            'bbox = trace_mapping.object_detector:main'
         ],
     },
 )

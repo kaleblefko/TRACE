@@ -1,3 +1,13 @@
+## OLLAMA Setup:
+On your computer outside the VM run<br>
+export OLLAMA_HOST=0.0.0.0<br>
+ollama serve<br>
+
+To get the IP address do: ipconfig getifaddr en0 (MacOS)<br>
+
+Must have a .env stored at ~/TRACE/.env<br>
+See .env.example for an example .env file<br>
+
 # Package Setup:
 if not performed already:
 >sudo apt install ros-humble-rtabmap-ros
@@ -60,18 +70,29 @@ if the drone is not ready for takeoff after these commands, set the following pa
 >MicroXRCEAgent udp4 -p 8888
 
 ## Terminal 3
+>cd ~/TRACE
+
 >colcon build
 
 >source install/setup.bash
 
->ros2 run trace_mapping mapping_node
+>ros2 run trace_mapping mapping
 
 ## Terminal 4
+>cd ~/TRACE
+
 >source install/setup.bash
 
->ros2 run trace_pipeline teleop
+>ros2 run trace_mapping teleop
 
 ## Terminal 5
 >rviz2
 
 Then add topic -> occupancy grid map
+
+## Terminal 6
+>cd ~/TRACE
+
+>source install/setup.bash
+
+>ros2 run trace_mapping bbox
