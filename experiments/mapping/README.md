@@ -96,3 +96,10 @@ Then add topic -> occupancy grid map
 >source install/setup.bash
 
 >ros2 run trace_mapping bbox
+
+## Terminal 6
+>cd ~/TRACE
+
+>source install/setup.bash
+
+>ros2 run trace_mapping visualizer

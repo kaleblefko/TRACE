@@ -118,7 +118,7 @@ class ObjectDetectorNode(Node):
         load_dotenv(dotenv_path=env_path)
 
         self._ollama_endpoint: str = os.getenv('OLLAMA_ENDPOINT', 'localhost:11434')
-        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'qwen3-vl')
+        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'qwen3-vl:4b-instruct')
         self._api_url: str = f"http://{self._ollama_endpoint}/api/chat"
 
         # ── Latest depth frame (written by gz callback, read by infer thread) ─
@@ -295,11 +295,18 @@ class ObjectDetectorNode(Node):
                     'z_m': round(z_m, 3) if math.isfinite(z_m) else None,
                 })
 
+                body_x = bbox["z_m"]   # forward from drone
+                body_y = bbox["x_m"]   # right from drone
+
                 self.get_logger().info(
                     f'Detected "{TARGET_LABEL}" | '
                     f'bbox=({bbox["x1"]},{bbox["y1"]})-({bbox["x2"]},{bbox["y2"]}) | '
                     f'depth={bbox["depth_m"]} m | '
                     f'cam xyz=({bbox["x_m"]}, {bbox["y_m"]}, {bbox["z_m"]}) m'
+                )
+                self.get_logger().info(
+                    f'Object relative to drone — '
+                    f'forward: {body_x:.2f} m | right: {body_y:.2f} m'
                 )
             else:
                 bbox.update({'cx_px': 0, 'cy_px': 0,
