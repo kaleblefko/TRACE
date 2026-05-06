@@ -8,6 +8,9 @@ To get the IP address do: ipconfig getifaddr en0 (MacOS)<br>
 Must have a .env stored at ~/TRACE/.env<br>
 See .env.example for an example .env file<br>
 
+to stop ollama (address already bound error):
+systemctl stop ollama
+
 # Package Setup:
 if not performed already:
 >sudo apt install ros-humble-rtabmap-ros
