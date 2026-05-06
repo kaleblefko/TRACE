@@ -64,12 +64,12 @@ if the drone is not ready for takeoff after these commands, set the following pa
 
 >source install/setup.bash
 
->ros2 run trace_mapping mapping_node
+>ros2 run trace_mapping mapping
 
 ## Terminal 4
 >source install/setup.bash
 
->ros2 run trace_pipeline teleop
+>ros2 run trace_mapping teleop
 
 ## Terminal 5
 >rviz2
