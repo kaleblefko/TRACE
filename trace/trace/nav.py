@@ -223,6 +223,34 @@ def path_still_clear(
     return all(not inflated[r, c] for r, c in path)
 
 
+def nearest_free_cell(
+    inflated: np.ndarray,
+    goal: tuple[int, int],
+    max_radius: int = 50,
+) -> Optional[tuple[int, int]]:
+    """BFS outward from goal to find the closest free (non-inflated) cell."""
+    from collections import deque
+    gr, gc = goal
+    visited: set[tuple[int, int]] = {goal}
+    queue: deque[tuple[int, int]] = deque([goal])
+    while queue:
+        r, c = queue.popleft()
+        if not inflated[r, c]:
+            return (r, c)
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if (in_grid(nr, nc)
+                        and (nr, nc) not in visited
+                        and abs(nr - gr) <= max_radius
+                        and abs(nc - gc) <= max_radius):
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROS2 Node
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,7 +305,7 @@ class SlamNav(Node):
             VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1',
             self._pos_cb, PX4_QOS)
         self.create_subscription(
-            VehicleStatus, '/fmu/out/vehicle_status',
+            VehicleStatus, '/fmu/out/vehicle_status_v1',
             self._status_cb, PX4_QOS)
         self.create_subscription(
             Float32, '/nav/yaw_cmd', self._yaw_cmd_cb, 10)
@@ -449,10 +477,17 @@ class SlamNav(Node):
             f'cell {goal} (blocked={goal_blocked})')
 
         if goal_blocked:
-            self.get_logger().error(
-                'Goal cell is inside an inflated obstacle — pick a free space.')
-            self._state = 'BLOCKED'
-            return
+            self.get_logger().warn(
+                f'Goal cell {goal} is inside an inflated obstacle — searching for nearest free cell.')
+            free = nearest_free_cell(inflated, goal)
+            if free is None:
+                self.get_logger().error('No free cell found near goal — staying BLOCKED.')
+                self._state = 'BLOCKED'
+                return
+            fn, fe = cell_to_world(*free)
+            self.get_logger().info(
+                f'Redirecting goal to nearest free cell {free} (N={fn:.2f} m  E={fe:.2f} m).')
+            goal = free
 
         raw = astar(inflated, start, goal)
         if raw is None:
