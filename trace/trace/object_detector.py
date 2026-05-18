@@ -73,15 +73,14 @@ RGB_TOPIC = (
 )
 DEPTH_TOPIC = '/depth_camera'
 
-TARGET_LABEL: str = "blue ball"
+DEFAULT_TARGET_LABEL: str = "blue ball"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Prompt
-# ──────────────────────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = f"""\
+
+def _build_system_prompt(label: str) -> str:
+    return f"""\
 You are a visual object-detection assistant for an autonomous drone.
 You will receive a single RGB camera image.
-Your task is to locate the {TARGET_LABEL} in the image.
+Your task is to locate the {label} in the image.
 
 Respond with ONLY a single JSON object — no markdown, no prose, no fences.
 All coordinates are NORMALIZED between 0.0 and 1.0 as a fraction of image width/height.
@@ -90,14 +89,14 @@ All coordinates are NORMALIZED between 0.0 and 1.0 as a fraction of image width/
 Schema:
 {{
   "detected": <true|false>,
-  "label": "{TARGET_LABEL}",
+  "label": "{label}",
   "x1": <float 0.0-1.0, left edge>,
   "y1": <float 0.0-1.0, top edge>,
   "x2": <float 0.0-1.0, right edge>,
   "y2": <float 0.0-1.0, bottom edge>
 }}
 
-If the {TARGET_LABEL} is NOT visible set detected=false and all coordinates to 0.0.
+If the {label} is NOT visible set detected=false and all coordinates to 0.0.
 Do NOT return pixel values. Return ONLY normalized 0.0-1.0 fractions.
 """
 
@@ -126,9 +125,16 @@ class ObjectDetectorNode(Node):
         self._is_processing = False
         self._last_result: Optional[dict] = None
 
+        # ── Target label (updated via /mission/new_target) ───────────────────
+        self._target_label: str = DEFAULT_TARGET_LABEL
+        self._target_lock = threading.Lock()
+
         # ── ROS 2 publishers ─────────────────────────────────────────────────
         self._pub_image = self.create_publisher(RosImage, '/detection/image', 10)
         self._pub_bbox  = self.create_publisher(String,   '/detection/bbox',  10)
+
+        # ── ROS 2 subscriptions ───────────────────────────────────────────────
+        self.create_subscription(String, '/mission/new_target', self._new_target_cb, 10)
 
         # ── gz-transport subscriptions ────────────────────────────────────────
         self._gz_node = GzNode()
@@ -139,9 +145,18 @@ class ObjectDetectorNode(Node):
         self.create_timer(0.2, self._inference_trigger_cb)
 
         self.get_logger().info(
-            f'ObjectDetectorNode ready — target: "{TARGET_LABEL}" | '
+            f'ObjectDetectorNode ready — target: "{self._target_label}" | '
             f'model: {self._ollama_model} | endpoint: {self._ollama_endpoint}'
         )
+
+    # ─────────────────────  target update  ──────────────────────────────────
+
+    def _new_target_cb(self, msg: String) -> None:
+        label = msg.data.strip()
+        if label:
+            with self._target_lock:
+                self._target_label = label
+            self.get_logger().info(f'Detection target updated to: "{label}"')
 
     # ─────────────────────  gz callbacks  ────────────────────────────────────
 
@@ -191,6 +206,9 @@ class ObjectDetectorNode(Node):
 
     def _run_inference(self, bgr: np.ndarray, depth: Optional[np.ndarray]) -> None:
         try:
+            with self._target_lock:
+                target = self._target_label
+
             # Resize full-res frame (e.g. 1920x1080) down to CAM_W x CAM_H.
             # All bbox coords are in this space. Visualizer also displays at this size.
             bgr = cv2.resize(bgr, (CAM_W, CAM_H), interpolation=cv2.INTER_AREA)
@@ -206,10 +224,10 @@ class ObjectDetectorNode(Node):
                 'model': self._ollama_model,
                 'stream': True,
                 'messages': [
-                    {'role': 'system', 'content': SYSTEM_PROMPT},
+                    {'role': 'system', 'content': _build_system_prompt(target)},
                     {
                         'role': 'user',
-                        'content': f'Detect the {TARGET_LABEL} in this image. Return normalized 0.0-1.0 coordinates, NOT pixels.',
+                        'content': f'Detect the {target} in this image. Return normalized 0.0-1.0 coordinates, NOT pixels.',
                         'images': [img_b64],
                     },
                 ],
@@ -237,7 +255,7 @@ class ObjectDetectorNode(Node):
             self.get_logger().info(f'VLM raw reply: {full_reply[:200]}')
 
             # ── 4. Parse bounding box ────────────────────────────────────────
-            bbox = self._parse_bbox(full_reply)
+            bbox = self._parse_bbox(full_reply, target)
 
             # Convert normalized 0.0-1.0 coords to pixel space
             if bbox['detected']:
@@ -252,7 +270,7 @@ class ObjectDetectorNode(Node):
                     f'VLM returned detected=true but degenerate bbox '
                     f'({bbox["x1"]},{bbox["y1"]})-({bbox["x2"]},{bbox["y2"]}) — treating as not detected'
                 )
-                bbox = _not_detected()
+                bbox = _not_detected(target)
 
 
             # ── 5. Back-project to 3-D using depth frame ─────────────────────
@@ -283,7 +301,7 @@ class ObjectDetectorNode(Node):
                 })
 
                 self.get_logger().info(
-                    f'Detected "{TARGET_LABEL}" | '
+                    f'Detected "{target}" | '
                     f'bbox=({bbox["x1"]},{bbox["y1"]})-({bbox["x2"]},{bbox["y2"]}) | '
                     f'depth={bbox["depth_m"]} m | '
                     f'forward={bbox["z_m"]} m | right={bbox["x_m"]} m'
@@ -293,7 +311,7 @@ class ObjectDetectorNode(Node):
                     'cx_px': 0, 'cy_px': 0,
                     'depth_m': None, 'x_m': None, 'y_m': None, 'z_m': None,
                 })
-                self.get_logger().info(f'"{TARGET_LABEL}" not detected in frame')
+                self.get_logger().info(f'"{target}" not detected in frame')
 
             self._last_result = bbox
 
@@ -313,30 +331,30 @@ class ObjectDetectorNode(Node):
     # ─────────────────────  bbox parser  ─────────────────────────────────────
 
     @staticmethod
-    def _parse_bbox(text: str) -> dict:
+    def _parse_bbox(text: str, target_label: str) -> dict:
         text = re.sub(r'```[a-zA-Z]*', '', text).strip('`').strip()
         match = re.search(r'\{.*?\}', text, re.DOTALL)
         if not match:
-            return _not_detected()
+            return _not_detected(target_label)
         try:
             obj = json.loads(match.group())
         except json.JSONDecodeError:
-            return _not_detected()
+            return _not_detected(target_label)
 
         if not {'detected', 'x1', 'y1', 'x2', 'y2'}.issubset(obj.keys()):
-            return _not_detected()
+            return _not_detected(target_label)
 
         try:
             return {
                 'detected': bool(obj['detected']),
-                'label':    str(obj.get('label', TARGET_LABEL)),
+                'label':    str(obj.get('label', target_label)),
                 'x1': float(obj['x1']),
                 'y1': float(obj['y1']),
                 'x2': float(obj['x2']),
                 'y2': float(obj['y2']),
             }
         except (ValueError, TypeError):
-            return _not_detected()
+            return _not_detected(target_label)
 
     # ─────────────────────  publishers  ──────────────────────────────────────
 
@@ -359,7 +377,8 @@ class ObjectDetectorNode(Node):
             cx, cy = bbox.get('cx_px', (x1 + x2) // 2), bbox.get('cy_px', (y1 + y2) // 2)
             cv2.drawMarker(vis, (cx, cy), (0, 255, 0), cv2.MARKER_CROSS, 12, 2, cv2.LINE_AA)
         else:
-            cv2.putText(vis, f'No {TARGET_LABEL} detected',
+            label_str = bbox.get('label', DEFAULT_TARGET_LABEL)
+            cv2.putText(vis, f'No {label_str} detected',
                         (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1, cv2.LINE_AA)
 
         ros_img = RosImage()
@@ -376,8 +395,8 @@ class ObjectDetectorNode(Node):
 
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _not_detected() -> dict:
-    return {'detected': False, 'label': TARGET_LABEL,
+def _not_detected(label: str = DEFAULT_TARGET_LABEL) -> dict:
+    return {'detected': False, 'label': label,
             'x1': 0, 'y1': 0, 'x2': 0, 'y2': 0}
 
 

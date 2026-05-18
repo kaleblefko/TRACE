@@ -48,7 +48,7 @@ RGB_TOPIC = (
     '/model/depth_cam/link/camera_link/sensor/IMX214/image'
 )
 
-TARGET_LABEL: str = "blue ball"
+DEFAULT_TARGET_LABEL: str = "blue ball"
 
 WIN_NAME       = "TRACE — RGB Detection"
 BOX_COLOR      = (0, 255, 80)
@@ -76,12 +76,15 @@ class DetectionVisualizerNode(Node):
         self._bbox_lock = threading.Lock()
         self._last_inference_time: float = 0.0
 
+        self._target_label: str = DEFAULT_TARGET_LABEL
+
         # ── gz-transport RGB subscriber ───────────────────────────────────────
         self._gz_node = GzNode()
         self._gz_node.subscribe(GzImage, RGB_TOPIC, self._rgb_cb)
 
-        # ── ROS 2 bbox subscriber ─────────────────────────────────────────────
-        self.create_subscription(String, '/detection/bbox', self._bbox_cb, 10)
+        # ── ROS 2 subscribers ─────────────────────────────────────────────────
+        self.create_subscription(String, '/detection/bbox',    self._bbox_cb,       10)
+        self.create_subscription(String, '/mission/new_target', self._new_target_cb, 10)
 
         # ── OpenCV window ─────────────────────────────────────────────────────
         cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
@@ -93,6 +96,13 @@ class DetectionVisualizerNode(Node):
         self.get_logger().info(
             'DetectionVisualizerNode ready — press Q or ESC to close'
         )
+
+    # ─────────────────────  target update  ──────────────────────────────────
+
+    def _new_target_cb(self, msg: String) -> None:
+        label = msg.data.strip()
+        if label:
+            self._target_label = label
 
     # ─────────────────────  gz RGB callback  ─────────────────────────────────
 
@@ -121,8 +131,10 @@ class DetectionVisualizerNode(Node):
     # ─────────────────────  overlay helpers  ─────────────────────────────────
 
     def _draw_bbox(self, canvas: np.ndarray, bbox: dict, stale: bool) -> None:
+        # bbox['label'] is always stamped with the detector's current target.
+        label = bbox.get('label', self._target_label)
         if not bbox.get('detected', False):
-            cv2.putText(canvas, f'No {TARGET_LABEL} detected',
+            cv2.putText(canvas, f'No {label} detected',
                         (12, 30), FONT, 0.65, NO_DET_COLOR, 2, cv2.LINE_AA)
             return
 
@@ -141,7 +153,7 @@ class DetectionVisualizerNode(Node):
         depth_m = bbox.get('depth_m')
         depth_str = f' {depth_m:.2f}m' if depth_m is not None else ''
         stale_str = ' [STALE]' if stale else ''
-        label_text = f'{TARGET_LABEL}{depth_str}{stale_str}'
+        label_text = f'{label}{depth_str}{stale_str}'
 
         (tw, th), _ = cv2.getTextSize(label_text, FONT, 0.55, 1)
         lx1, ly1 = x1, max(y1 - th - 8, 0)
@@ -177,8 +189,9 @@ class DetectionVisualizerNode(Node):
                         f'depth:{depth_str}  fwd:{body_fwd}  right:{body_right}',
                         (10, 42), FONT, 0.48, (200, 200, 200), 1, cv2.LINE_AA)
         else:
+            searching = bbox.get('label', self._target_label) if bbox is not None else self._target_label
             cv2.putText(bar, 'NOT DETECTED', (10, 20), FONT, 0.55, NO_DET_COLOR, 1, cv2.LINE_AA)
-            cv2.putText(bar, f'target: {TARGET_LABEL}',
+            cv2.putText(bar, f'searching: {searching}',
                         (10, 42), FONT, 0.48, (140, 140, 140), 1, cv2.LINE_AA)
 
         if since_inference > 0:

@@ -66,16 +66,23 @@ SCAN_YAW_STEP      = 2.0 * math.pi / SCAN_STEPS
 YAW_LOCK_TOLERANCE  = math.radians(5.0)  # heading within this of target = locked
 YAW_RATE_THRESH     = math.radians(8.0)  # rad/s — below this counts as "still"
 YAW_STILL_TICKS     = 5                  # consecutive 10Hz ticks below thresh
-YAW_LOCK_TIMEOUT    = 6.0                # s, give up trying to lock and move on
+YAW_LOCK_TIMEOUT    = 15.0               # s, give up waiting for clean lock
 
 # Inference confirmation parameters
-# Inference confirmation parameters
-INFERENCE_FRAME_BUDGET = 12              # max frames per quadrant after lock (backstop)
-REQUIRED_DETECTIONS    = 3               # consecutive detected=true to commit
-REQUIRED_NEGATIVES     = 3               # consecutive detected=false to advance
+INFERENCE_FRAME_BUDGET = 20             # max frames per quadrant after lock (backstop)
+REQUIRED_DETECTIONS    = 3              # consecutive detected=true to commit
+REQUIRED_NEGATIVES     = 3             # consecutive detected=false to advance
+MIN_LOCK_DWELL_SECS    = 2.0           # seconds after locking before negatives count
+
+# Return-to-origin timing
+RETURN_NAV_TIMEOUT     = 15.0          # s, wait for slam_nav to enter NAV after goal sent
+RETURN_SETTLE_SECS     = 8.0           # s, physical settle time at origin before yaw rotation
+RETURN_YAW_STILL_TICKS = 20            # 10 Hz ticks of yaw stability required (2 s)
+RETURN_YAW_TIMEOUT     = 20.0          # s, give up on yaw alignment and start scan anyway
 MIN_DEPTH_M            = 0.4             # closer than this is unreliable
 MAX_DEPTH_M            = 15.0            # farther than this is unreliable
-NAV_ARRIVED_RADIUS     = 0.40            # m, additional sanity check
+NAV_ARRIVED_RADIUS     = 0.40            # m, arrival tolerance around the standoff goal
+APPROACH_STANDOFF      = 1.5            # m, stop this far short of the detected object
 
 # Camera mount: detector reports camera-frame x=right, y=down, z=forward.
 # The drone body is FRD (forward-right-down). For a forward-facing camera
@@ -151,6 +158,16 @@ class MissionStateMachine(Node):
         # We wait for slam_nav to transition NAV -> HOLD to detect arrival.
         # Track whether we've seen NAV since the goal was sent.
         self._saw_nav_after_goal: bool = False
+        # Return-to-origin bookkeeping
+        self._origin: tuple[float, float] = (0.0, 0.0)
+        self._origin_yaw: float = 0.0          # heading at takeoff, restored on return
+        self._saw_nav_after_return: bool = False
+        self._return_sent_time: float = 0.0
+        self._return_at_origin: bool = False   # True once position HOLD reached
+        self._return_yaw_still_ticks: int = 0
+        self._return_yaw_entered: float = 0.0  # wall time yaw alignment began
+        # New target requested by the operator via /mission/new_target
+        self._new_target: Optional[str] = None
 
         # ── Publishers ──────────────────────────────────────────────────────
         self._pub_yaw  = self.create_publisher(Float32, '/nav/yaw_cmd', 10)
@@ -158,8 +175,9 @@ class MissionStateMachine(Node):
         self._pub_state = self.create_publisher(String, '/mission/state', 10)
 
         # ── Subscriptions ───────────────────────────────────────────────────
-        self.create_subscription(String, '/detection/bbox', self._bbox_cb, 10)
-        self.create_subscription(String, '/nav/status',     self._nav_cb,  10)
+        self.create_subscription(String, '/detection/bbox',      self._bbox_cb,       10)
+        self.create_subscription(String, '/nav/status',           self._nav_cb,        10)
+        self.create_subscription(String, '/mission/new_target',   self._new_target_cb, 10)
         self.create_subscription(
             VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1',
             self._pos_cb, PX4_QOS)
@@ -188,6 +206,11 @@ class MissionStateMachine(Node):
 
     def _nav_cb(self, msg: String) -> None:
         self._nav_status = msg.data
+
+    def _new_target_cb(self, msg: String) -> None:
+        label = msg.data.strip()
+        if label:
+            self._new_target = label
 
     def _pos_cb(self, msg: VehicleLocalPosition) -> None:
         self._pos = (float(msg.x), float(msg.y), float(msg.z))
@@ -267,10 +290,17 @@ class MissionStateMachine(Node):
         elif self._state == 'APPROACH':
             self._do_approach()
         elif self._state == 'ARRIVED':
-            # Terminal — keep releasing yaw so PX4 holds heading freely.
             self._release_yaw()
+            if self._new_target is not None:
+                self._begin_return_to_origin(self._new_target)
+                self._new_target = None
         elif self._state == 'SCAN_FAILED':
             self._release_yaw()
+            if self._new_target is not None:
+                self._begin_return_to_origin(self._new_target)
+                self._new_target = None
+        elif self._state == 'RETURN_TO_ORIGIN':
+            self._do_return_to_origin()
 
     # ── State: WAIT_NAV_READY ────────────────────────────────────────────────
 
@@ -279,8 +309,10 @@ class MissionStateMachine(Node):
             return
         if self._pos is None:
             return
-        # slam_nav has finished its own takeoff. Begin the scan from the
-        # drone's current heading, sweeping CCW (positive yaw).
+        # slam_nav has finished its own takeoff. Record origin and heading for return trips.
+        self._origin = (self._pos[0], self._pos[1])
+        self._origin_yaw = self._yaw
+        # Begin the scan from the drone's current heading, sweeping CCW (positive yaw).
         self._scan_yaw_start = self._yaw
         self._scan_idx = 0
         self._enter_scan_stop()
@@ -306,6 +338,10 @@ class MissionStateMachine(Node):
         self._frames_since_lock = 0
         self._last_detection = None
         self._last_detection_stamp = 0.0
+        # Clear any stale bbox so previous-mission data cannot trigger early advance.
+        with self._bbox_lock:
+            self._bbox = None
+            self._bbox_stamp = 0.0
         self.get_logger().info(
             f'Quadrant {self._scan_idx + 1}/{SCAN_STEPS} — rotating to '
             f'yaw target {math.degrees(wrapped):+.1f}°.')
@@ -356,9 +392,18 @@ class MissionStateMachine(Node):
                     f'yaw {math.degrees(self._yaw):+.1f}° — collecting inferences.')
                 return
 
-            # Lock timeout — drone never settled. Move on rather than hang.
+            # Lock timeout — drone didn't fully settle. Force-lock anyway so
+            # Phase B can still run inference and detect/reject the object.
+            # Advancing here instead would cascade (each mid-rotation command
+            # makes the next quadrant harder to settle, skipping all of them).
             if now - self._scan_stop_entered > YAW_LOCK_TIMEOUT:
-                self._advance_quadrant(reason='yaw lock timeout')
+                self.get_logger().warn(
+                    f'Quadrant {self._scan_idx + 1} — yaw lock timed out; '
+                    f'force-locking and collecting inferences anyway.')
+                self._quadrant_locked = True
+                self._lock_time = now
+                with self._bbox_lock:
+                    self._last_detection_stamp = self._bbox_stamp
             return
 
         # ── Phase B: locked — track consecutive streaks ─────────────────────
@@ -406,6 +451,15 @@ class MissionStateMachine(Node):
                     self._begin_approach(self._last_detection)
                     return
             else:
+                # Don't count negatives until the camera has fully settled after
+                # locking — prevents noisy post-rotation frames from advancing
+                # the quadrant before the VLM has seen a clean view.
+                if now - self._lock_time < MIN_LOCK_DWELL_SECS:
+                    self.get_logger().info(
+                        f'Quadrant {self._scan_idx + 1} — negative during dwell '
+                        f'({now - self._lock_time:.1f}s < {MIN_LOCK_DWELL_SECS}s), not counting.')
+                    return
+
                 self._negative_count += 1
                 if self._detection_count > 0:
                     self.get_logger().info(
@@ -453,8 +507,26 @@ class MissionStateMachine(Node):
             self.get_logger().error(
                 'Cannot project detection — no position. Returning to SCAN.')
             return
-        n, e = world
-        # Release yaw so slam_nav computes path-aligned yaw during NAV.
+        n_obj, e_obj = world
+
+        # Back the goal off by APPROACH_STANDOFF metres along the drone→object
+        # vector so the drone never aims at the object (or the wall behind it).
+        dn = n_obj - self._pos[0]
+        de = e_obj - self._pos[1]
+        dist_to_obj = math.hypot(dn, de)
+
+        if dist_to_obj <= APPROACH_STANDOFF:
+            # Already within standoff — hover here rather than creeping forward.
+            self.get_logger().info(
+                f'Object within standoff ({dist_to_obj:.2f}m ≤ {APPROACH_STANDOFF}m) '
+                f'— treating as arrived.')
+            self._state = 'ARRIVED'
+            return
+
+        scale = (dist_to_obj - APPROACH_STANDOFF) / dist_to_obj
+        n = self._pos[0] + dn * scale
+        e = self._pos[1] + de * scale
+
         self._release_yaw()
         self._publish_nav_goal(n, e)
         self._goal_world = (n, e)
@@ -462,7 +534,8 @@ class MissionStateMachine(Node):
         self._saw_nav_after_goal = False
         self.get_logger().info(
             f'Nav goal sent: N={n:.2f}m  E={e:.2f}m '
-            f'(from drone N={self._pos[0]:.2f} E={self._pos[1]:.2f} yaw={math.degrees(self._yaw):.1f}°)')
+            f'(object at N={n_obj:.2f}m E={e_obj:.2f}m, '
+            f'standoff={APPROACH_STANDOFF}m, range={dist_to_obj:.2f}m)')
         self._state = 'APPROACH'
 
     def _do_approach(self) -> None:
@@ -470,9 +543,9 @@ class MissionStateMachine(Node):
         if self._nav_status == 'NAV':
             self._saw_nav_after_goal = True
         elif self._nav_status == 'BLOCKED':
-            self.get_logger().error(
-                'slam_nav reports BLOCKED — cannot reach object. Stopping.')
-            self._state = 'SCAN_FAILED'
+            self.get_logger().warn(
+                'slam_nav BLOCKED on approach — hovering at current position.')
+            self._state = 'ARRIVED'
             return
 
         if self._saw_nav_after_goal and self._nav_status == 'HOLD':
@@ -503,6 +576,95 @@ class MissionStateMachine(Node):
             self.get_logger().error(
                 'slam_nav never entered NAV after goal — goal likely rejected.')
             self._state = 'SCAN_FAILED'
+
+    # ── State: RETURN_TO_ORIGIN ──────────────────────────────────────────────
+
+    def _begin_return_to_origin(self, new_target: str) -> None:
+        on, oe = self._origin
+        self.get_logger().info(
+            f'New target "{new_target}" received — returning to origin '
+            f'N={on:.2f}m E={oe:.2f}m, then realigning to '
+            f'yaw={math.degrees(self._origin_yaw):.1f}°.')
+        self._release_yaw()
+        self._publish_nav_goal(on, oe)
+        self._return_sent_time = time.time()
+        self._saw_nav_after_return = False
+        self._return_at_origin = False
+        self._return_yaw_still_ticks = 0
+        self._state = 'RETURN_TO_ORIGIN'
+
+    def _do_return_to_origin(self) -> None:
+        now = time.time()
+
+        # ── Phase 1: flying back to origin position ──────────────────────────
+        if not self._return_at_origin:
+            if self._nav_status == 'NAV':
+                self._saw_nav_after_return = True
+            elif self._nav_status == 'BLOCKED':
+                self.get_logger().error(
+                    'slam_nav BLOCKED while returning to origin — staying SCAN_FAILED.')
+                self._state = 'SCAN_FAILED'
+                return
+
+            if self._saw_nav_after_return and self._nav_status == 'HOLD':
+                dist = 0.0
+                if self._pos is not None:
+                    dist = math.hypot(
+                        self._pos[0] - self._origin[0],
+                        self._pos[1] - self._origin[1],
+                    )
+                self.get_logger().info(
+                    f'At origin (dist={dist:.2f}m) — settling for '
+                    f'{RETURN_SETTLE_SECS:.0f}s then rotating to '
+                    f'heading {math.degrees(self._origin_yaw):.1f}°.')
+                self._return_at_origin = True
+                self._return_yaw_entered = now
+                return
+
+            if (not self._saw_nav_after_return
+                    and now - self._return_sent_time > RETURN_NAV_TIMEOUT):
+                self.get_logger().error(
+                    'slam_nav never entered NAV returning to origin — giving up.')
+                self._state = 'SCAN_FAILED'
+            return
+
+        # ── Phase 2a: physical settle — hold position, no yaw command yet ────
+        settled_for = now - self._return_yaw_entered
+        if settled_for < RETURN_SETTLE_SECS:
+            self.get_logger().info(
+                f'Settling at origin ({settled_for:.1f}s / {RETURN_SETTLE_SECS:.0f}s)…',
+                throttle_duration_sec=2.0)
+            return
+
+        # ── Phase 2b: yaw realignment ─────────────────────────────────────────
+        self._publish_yaw_cmd(self._origin_yaw)
+
+        err = math.atan2(
+            math.sin(self._origin_yaw - self._yaw),
+            math.cos(self._origin_yaw - self._yaw),
+        )
+        if abs(err) < YAW_LOCK_TOLERANCE and abs(self._yaw_rate) < YAW_RATE_THRESH:
+            self._return_yaw_still_ticks += 1
+        else:
+            self._return_yaw_still_ticks = 0
+
+        if self._return_yaw_still_ticks >= RETURN_YAW_STILL_TICKS:
+            self.get_logger().info(
+                'Origin heading restored — restarting 360° scan.')
+            self._scan_yaw_start = self._yaw
+            self._scan_idx = 0
+            self._enter_scan_stop()
+            self._state = 'SCAN'
+            return
+
+        # Safety timeout: start scan from current heading if alignment takes too long.
+        if now - self._return_yaw_entered > RETURN_SETTLE_SECS + RETURN_YAW_TIMEOUT:
+            self.get_logger().warn(
+                'Yaw realignment timed out — starting scan from current heading.')
+            self._scan_yaw_start = self._yaw
+            self._scan_idx = 0
+            self._enter_scan_stop()
+            self._state = 'SCAN'
 
 
 # ─────────────────────────────────────────────────────────────────────────────

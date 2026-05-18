@@ -4,7 +4,7 @@ slam_nav.py
 ===========
 SLAM-aware 2-D navigation for a PX4 drone in ROS2 Humble.
 
-Handles arming, mode switch, takeoff to 1 m, then A* path planning to
+Handles arming, mode switch, takeoff to 1.25 m, then A* path planning to
 /nav_goal targets while holding altitude.
 
 Subscriptions
@@ -70,14 +70,15 @@ GRID_ORIGIN = 250
 
 # ── Planner settings ──────────────────────────────────────────────────────────
 OCC_THRESHOLD   = 60
-INFLATE_CELLS   = 4
+INFLATE_CELLS   = 12
 WAYPOINT_RADIUS = 0.30
 REPLAN_INTERVAL = 2.0
 
 # ── Takeoff ───────────────────────────────────────────────────────────────────
-TAKEOFF_ALT_NED  = -1.0
+TAKEOFF_ALT_NED  = -1.25
 TAKEOFF_RADIUS   = 0.15
-PREFLIGHT_TICKS  = 20
+PREFLIGHT_TICKS  = 50   # 5 s of heartbeat before first arm attempt
+ARM_RETRY_TICKS  = 30   # retry arm/mode commands every 3 s if PX4 hasn't responded
 VEHICLE_CMD_ARM  = 400
 VEHICLE_CMD_MODE = 176
 PX4_MODE_OFFBOARD = 6
@@ -373,12 +374,22 @@ class SlamNav(Node):
                 self._send_command(VEHICLE_CMD_MODE, param1=1.0,
                                    param2=float(PX4_MODE_OFFBOARD))
                 self._state = 'OFFBOARD'
+            elif self._tick % ARM_RETRY_TICKS == 0:
+                self.get_logger().info(
+                    f'Waiting for arm (arming_state={self._arming_state}) — retrying.')
+                self._send_command(VEHICLE_CMD_ARM, param1=1.0)
 
         elif self._state == 'OFFBOARD':
             self._publish_setpoint(0.0, 0.0, TAKEOFF_ALT_NED, yaw=float("nan"))
             if self._nav_state == NAV_STATE_OFFBOARD:
-                self.get_logger().info('Offboard active — climbing to 1 m.')
+                self.get_logger().info(
+                    f'Offboard active — climbing to {abs(TAKEOFF_ALT_NED):.2f} m.')
                 self._state = 'TAKEOFF'
+            elif self._tick % ARM_RETRY_TICKS == 0:
+                self.get_logger().info(
+                    f'Waiting for Offboard (nav_state={self._nav_state}) — retrying mode switch.')
+                self._send_command(VEHICLE_CMD_MODE, param1=1.0,
+                                   param2=float(PX4_MODE_OFFBOARD))
 
         elif self._state == 'TAKEOFF':
             self._publish_setpoint(0.0, 0.0, TAKEOFF_ALT_NED, yaw=float("nan"))
