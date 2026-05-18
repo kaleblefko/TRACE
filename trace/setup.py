@@ -24,11 +24,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'teleop = trace_mapping.teleop:main',
-            'mapping = trace_mapping.occupancy_grid_mapper:main',
-            'bbox = trace_mapping.object_detector:main',
-            'visualizer = trace_mapping.detection_visualizer:main',
-            'nav = trace_mapping.nav:main'
+            'teleop = trace.teleop:main',
+            'mapping = trace.occupancy_grid_mapper:main',
+            'bbox = trace.object_detector:main',
+            'visualizer = trace.detection_visualizer:main',
+            'nav = trace.nav:main',
+            'pipeline = trace.state_machine:main'
         ],
     },
 )

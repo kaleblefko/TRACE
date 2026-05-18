@@ -4,46 +4,37 @@ slam_nav.py
 ===========
 SLAM-aware 2-D navigation for a PX4 drone in ROS2 Humble.
 
-Assumes the drone is already armed, airborne, and the operator will switch
-to Offboard mode manually (or it is already in Offboard).  This node only
-handles path planning and setpoint streaming — not arming or mode switching.
+Handles arming, mode switch, takeoff to 1 m, then A* path planning to
+/nav_goal targets while holding altitude.
 
 Subscriptions
 ─────────────
   /slam/occupancy_grid             nav_msgs/OccupancyGrid     (live, 1 Hz)
   /nav_goal                        geometry_msgs/PoseStamped  (operator goal)
   /fmu/out/vehicle_local_position  px4_msgs/VehicleLocalPosition
+  /fmu/out/vehicle_status          px4_msgs/VehicleStatus
+  /nav/yaw_cmd                     std_msgs/Float32           (radians, NED)
+                                     — when present and in HOLD, the held
+                                       position is published with this yaw
+                                       instead of NaN, so the drone rotates
+                                       in place. Set to NaN to release.
 
 Publications
 ────────────
   /fmu/in/offboard_control_mode    px4_msgs/OffboardControlMode  (10 Hz always)
   /fmu/in/trajectory_setpoint      px4_msgs/TrajectorySetpoint   (10 Hz always)
+  /fmu/in/vehicle_command          px4_msgs/VehicleCommand
   /slam/nav_path                   nav_msgs/Path                 (planned path)
+  /nav/status                      std_msgs/String               (1 Hz)
+                                     — one of: PREFLIGHT, ARM, OFFBOARD,
+                                       TAKEOFF, HOLD, NAV, BLOCKED.
 
 Nav goal format
 ───────────────
   geometry_msgs/PoseStamped in the 'map' frame.
   pose.position.x = North [m]
   pose.position.y = East  [m]
-  pose.position.z = ignored — drone holds current altitude throughout
-
-  Example:
-    ros2 topic pub --once /nav_goal geometry_msgs/PoseStamped \
-      "{header: {frame_id: 'map'}, pose: {position: {x: 3.0, y: 2.0, z: 0.0}}}"
-
-Grid conventions (matches occupancy_grid_mapper.py)
-────────────────────────────────────────────────────
-  GRID_RES=0.05 m/cell, GRID_CELLS=500, GRID_ORIGIN=250
-  Row grows North, col grows East.
-  OccupancyGrid.data is row-major from the mapper's log_odds.ravel()
-  with no flip applied, so row 0 = North edge of the grid.
-
-A* planner
-──────────
-  8-connected grid on the current occupancy snapshot.
-  Obstacles inflated by INFLATE_CELLS before planning.
-  Raw path is string-pulled (greedy visibility) to reduce waypoints.
-  Path re-checked every REPLAN_INTERVAL seconds; replanned if blocked.
+  pose.position.z = ignored — drone holds current altitude throughout.
 """
 
 import heapq
@@ -63,6 +54,7 @@ from rclpy.qos import (
 
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
+from std_msgs.msg import Float32, String
 from px4_msgs.msg import (
     OffboardControlMode,
     TrajectorySetpoint,
@@ -77,15 +69,15 @@ GRID_CELLS  = 500
 GRID_ORIGIN = 250
 
 # ── Planner settings ──────────────────────────────────────────────────────────
-OCC_THRESHOLD   = 60    # cells >= this treated as occupied (0-100 scale)
-INFLATE_CELLS   = 4     # obstacle inflation radius [cells] (~20 cm clearance)
-WAYPOINT_RADIUS = 0.30  # [m] advance to next waypoint when within this distance
-REPLAN_INTERVAL = 2.0   # [s] how often to check if path is still clear
+OCC_THRESHOLD   = 60
+INFLATE_CELLS   = 4
+WAYPOINT_RADIUS = 0.30
+REPLAN_INTERVAL = 2.0
 
 # ── Takeoff ───────────────────────────────────────────────────────────────────
-TAKEOFF_ALT_NED  = -1.0   # [m] target altitude in NED (negative = up)
-TAKEOFF_RADIUS   = 0.15   # [m] considered airborne when within this of target
-PREFLIGHT_TICKS  = 20     # 10 Hz ticks to stream before arming (= 2 s)
+TAKEOFF_ALT_NED  = -1.0
+TAKEOFF_RADIUS   = 0.15
+PREFLIGHT_TICKS  = 20
 VEHICLE_CMD_ARM  = 400
 VEHICLE_CMD_MODE = 176
 PX4_MODE_OFFBOARD = 6
@@ -119,7 +111,6 @@ def in_grid(row: int, col: int) -> bool:
 
 
 def inflate_obstacles(occ: np.ndarray, radius: int) -> np.ndarray:
-    """Binary dilation via 2-D prefix sums — no scipy needed."""
     blocked = (occ >= OCC_THRESHOLD).astype(np.uint8)
     ps = np.zeros((GRID_CELLS + 1, GRID_CELLS + 1), dtype=np.int32)
     ps[1:, 1:] = np.cumsum(np.cumsum(blocked, axis=0), axis=1)
@@ -140,7 +131,6 @@ def astar(
     start: tuple[int, int],
     goal: tuple[int, int],
 ) -> Optional[list[tuple[int, int]]]:
-    """8-connected A* — returns cell list start to goal, or None."""
     if inflated[goal[0], goal[1]]:
         return None
 
@@ -188,7 +178,6 @@ def string_pull(
     path: list[tuple[int, int]],
     inflated: np.ndarray,
 ) -> list[tuple[int, int]]:
-    """Greedy visibility string-pull to reduce waypoint count."""
     if len(path) <= 2:
         return path
     pruned = [path[0]]
@@ -209,7 +198,6 @@ def _line_clear(
     b: tuple[int, int],
     inflated: np.ndarray,
 ) -> bool:
-    """Bresenham line check — True if no obstacle between a and b."""
     r0, c0 = a
     r1, c1 = b
     dr = abs(r1 - r0); dc = abs(c1 - c0)
@@ -246,8 +234,8 @@ class SlamNav(Node):
 
         # ── Grid state ────────────────────────────────────────────────────────
         self._grid_lock = threading.Lock()
-        self._occ_grid:  Optional[np.ndarray] = None   # (CELLS, CELLS) int16
-        self._inflated:  Optional[np.ndarray] = None   # (CELLS, CELLS) bool
+        self._occ_grid:  Optional[np.ndarray] = None
+        self._inflated:  Optional[np.ndarray] = None
 
         # ── Drone position (NED metres from VehicleLocalPosition) ─────────────
         self._pos: Optional[tuple[float, float, float]] = None
@@ -261,7 +249,12 @@ class SlamNav(Node):
         self._nav_state:    int = -1
         self._tick:         int = 0
         # States: PREFLIGHT -> ARM -> OFFBOARD -> TAKEOFF -> HOLD -> NAV
+        # plus transient BLOCKED reported when planning fails.
         self._state: str = 'PREFLIGHT'
+
+        # Externally-commanded yaw for HOLD state. NaN means "free yaw"
+        # (PX4 holds whatever heading it has).
+        self._yaw_cmd: float = float('nan')
 
         # ── Publishers ───────────────────────────────────────────────────────
         self._pub_ocm  = self.create_publisher(
@@ -272,6 +265,8 @@ class SlamNav(Node):
             VehicleCommand, '/fmu/in/vehicle_command', PX4_QOS)
         self._pub_path = self.create_publisher(
             Path, '/slam/nav_path', 10)
+        self._pub_status = self.create_publisher(
+            String, '/nav/status', 10)
 
         # ── Subscriptions ────────────────────────────────────────────────────
         self.create_subscription(
@@ -284,26 +279,27 @@ class SlamNav(Node):
         self.create_subscription(
             VehicleStatus, '/fmu/out/vehicle_status',
             self._status_cb, PX4_QOS)
+        self.create_subscription(
+            Float32, '/nav/yaw_cmd', self._yaw_cmd_cb, 10)
 
         # ── 10 Hz control loop ───────────────────────────────────────────────
         self.create_timer(0.1, self._loop)
+        # ── 1 Hz status publisher ────────────────────────────────────────────
+        self.create_timer(1.0, self._publish_status)
 
         self.get_logger().info('slam_nav ready — will arm, take off to 1 m, then await nav goals.')
 
     # ─────────────────────  Callbacks  ───────────────────────────────────────
 
     def _grid_cb(self, msg: OccupancyGrid) -> None:
-        """Ingest live occupancy grid and rebuild inflated obstacle map."""
         data = np.array(msg.data, dtype=np.int16).reshape(
             msg.info.height, msg.info.width)
-        # No flip: mapper publishes log_odds.ravel() directly (row 0 = North).
         inflated = inflate_obstacles(data, INFLATE_CELLS)
         with self._grid_lock:
             self._occ_grid = data
             self._inflated = inflated
 
     def _goal_cb(self, msg: PoseStamped) -> None:
-        """Receive a new nav goal and trigger A* planning."""
         goal_n = float(msg.pose.position.x)
         goal_e = float(msg.pose.position.y)
         self._goal_world = (goal_n, goal_e)
@@ -318,15 +314,24 @@ class SlamNav(Node):
         self._arming_state = int(msg.arming_state)
         self._nav_state    = int(msg.nav_state)
 
+    def _yaw_cmd_cb(self, msg: Float32) -> None:
+        """External yaw command for HOLD state."""
+        self._yaw_cmd = float(msg.data)
+
+    # ─────────────────────  Status publisher  ────────────────────────────────
+
+    def _publish_status(self) -> None:
+        msg = String()
+        msg.data = self._state
+        self._pub_status.publish(msg)
+
     # ─────────────────────  10 Hz loop  ──────────────────────────────────────
 
     def _loop(self) -> None:
-        # Offboard heartbeat — must arrive at >=2 Hz or PX4 exits Offboard mode.
         self._publish_heartbeat()
         self._tick += 1
 
         if self._state == 'PREFLIGHT':
-            # Stream takeoff setpoint before arming so PX4 sees setpoints flowing.
             self._publish_setpoint(0.0, 0.0, TAKEOFF_ALT_NED, yaw=float("nan"))
             if self._tick >= PREFLIGHT_TICKS:
                 self.get_logger().info('Preflight done — arming.')
@@ -356,12 +361,18 @@ class SlamNav(Node):
                     self._state = 'HOLD'
 
         elif self._state == 'HOLD':
-            # Re-send current position each tick so PX4 holds in place.
+            # Re-send current position with externally commanded yaw so
+            # the state machine can rotate the drone in place via /nav/yaw_cmd.
             if self._pos is not None:
-                self._publish_setpoint(*self._pos, yaw=float("nan"))
+                self._publish_setpoint(*self._pos, yaw=self._yaw_cmd)
 
         elif self._state == 'NAV':
             self._nav_step()
+
+        elif self._state == 'BLOCKED':
+            # Planning failed — hold position until next goal arrives.
+            if self._pos is not None:
+                self._publish_setpoint(*self._pos, yaw=self._yaw_cmd)
 
     # ─────────────────────  Navigation  ──────────────────────────────────────
 
@@ -370,7 +381,6 @@ class SlamNav(Node):
             self._state = 'HOLD'
             return
 
-        # Periodic obstacle re-check on the remaining path.
         now = self.get_clock().now().nanoseconds * 1e-9
         if now - self._last_replan > REPLAN_INTERVAL:
             self._last_replan = now
@@ -382,10 +392,9 @@ class SlamNav(Node):
                 self._replan()
                 return
 
-        # Stream current waypoint as setpoint.
         wp_r, wp_c = self._path[self._wp_idx]
         wp_n, wp_e = cell_to_world(wp_r, wp_c)
-        wp_z       = self._pos[2]       # hold current altitude
+        wp_z       = self._pos[2]
         if self._wp_idx == 0:
             prev_n, prev_e = self._pos[0], self._pos[1]
         else:
@@ -394,7 +403,6 @@ class SlamNav(Node):
         yaw = math.atan2(wp_e - prev_e, wp_n - prev_n)
         self._publish_setpoint(wp_n, wp_e, wp_z, yaw)
 
-        # Advance when close enough to current waypoint.
         dist = math.hypot(wp_n - self._pos[0], wp_e - self._pos[1])
         if dist < WAYPOINT_RADIUS:
             self._wp_idx += 1
@@ -413,6 +421,7 @@ class SlamNav(Node):
     def _replan(self) -> None:
         if self._pos is None:
             self.get_logger().warn('No position yet — cannot plan.')
+            self._state = 'BLOCKED'
             return
         if self._goal_world is None:
             return
@@ -422,6 +431,7 @@ class SlamNav(Node):
 
         if inflated is None:
             self.get_logger().warn('No map yet — cannot plan.')
+            self._state = 'BLOCKED'
             return
 
         start = world_to_cell(self._pos[0], self._pos[1])
@@ -429,6 +439,7 @@ class SlamNav(Node):
 
         if not in_grid(*start) or not in_grid(*goal):
             self.get_logger().error('Start or goal is outside grid bounds.')
+            self._state = 'BLOCKED'
             return
 
         start_blocked = bool(inflated[start[0], start[1]])
@@ -440,11 +451,13 @@ class SlamNav(Node):
         if goal_blocked:
             self.get_logger().error(
                 'Goal cell is inside an inflated obstacle — pick a free space.')
+            self._state = 'BLOCKED'
             return
 
         raw = astar(inflated, start, goal)
         if raw is None:
             self.get_logger().error('A* found no path to goal.')
+            self._state = 'BLOCKED'
             return
 
         smooth = string_pull(raw, inflated)
@@ -494,8 +507,6 @@ class SlamNav(Node):
         msg.source_component = 1
         msg.from_external    = True
         self._pub_cmd.publish(msg)
-
-    # ─────────────────────  Path visualisation  ───────────────────────────────
 
     def _publish_path_msg(self, path: list[tuple[int, int]]) -> None:
         msg = Path()
