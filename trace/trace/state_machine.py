@@ -24,7 +24,7 @@ Subscriptions
   /detection/bbox                  std_msgs/String (JSON from object_detector)
   /nav/status                      std_msgs/String (from slam_nav)
   /fmu/out/vehicle_local_position_v1   px4_msgs/VehicleLocalPosition
-  /fmu/out/vehicle_attitude        px4_msgs/VehicleAttitude
+  /fmu/out/vehicle_attitude_v1         px4_msgs/VehicleAttitude
 
 Publications
 ────────────
@@ -59,12 +59,21 @@ from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
 
 SCAN_STEPS         = 8                   # 8 × 45° = full 360°
 SCAN_YAW_STEP      = 2.0 * math.pi / SCAN_STEPS
-SCAN_DWELL_SEC     = 3.0                 # time per stop (settle + ~15 frames)
-SCAN_SETTLE_SEC    = 1.5                 # ignore detections until settled
-DETECTION_FRESH_SEC = 1.0                # bbox older than this is stale
-MIN_DEPTH_M        = 0.4                 # closer than this is unreliable
-MAX_DEPTH_M        = 15.0                # farther than this is unreliable
-NAV_ARRIVED_RADIUS = 0.40                # m, additional sanity check
+
+# Quadrant lock parameters
+YAW_LOCK_TOLERANCE  = math.radians(5.0)  # heading within this of target = locked
+YAW_RATE_THRESH     = math.radians(8.0)  # rad/s — below this counts as "still"
+YAW_STILL_TICKS     = 5                  # consecutive 10Hz ticks below thresh
+YAW_LOCK_TIMEOUT    = 6.0                # s, give up trying to lock and move on
+
+# Inference confirmation parameters
+INFERENCE_TIMEOUT_SEC = 15.0             # max time per quadrant after lock (backstop)
+REQUIRED_DETECTIONS   = 3                # consecutive detected=true to commit
+REQUIRED_NEGATIVES    = 3                # consecutive detected=false to advance
+DETECTION_FRESH_SEC   = 1.0              # bbox older than this is stale
+MIN_DEPTH_M           = 0.4              # closer than this is unreliable
+MAX_DEPTH_M           = 15.0             # farther than this is unreliable
+NAV_ARRIVED_RADIUS    = 0.40             # m, additional sanity check
 
 # Camera mount: detector reports camera-frame x=right, y=down, z=forward.
 # The drone body is FRD (forward-right-down). For a forward-facing camera
@@ -114,13 +123,25 @@ class MissionStateMachine(Node):
         self._nav_status: str = ''   # latest /nav/status
         self._pos: Optional[tuple[float, float, float]] = None  # NED
         self._yaw: float = 0.0       # current heading (rad, NED)
+        self._prev_yaw: Optional[float] = None
+        self._prev_yaw_stamp: float = 0.0
+        self._yaw_rate: float = 0.0  # rad/s
 
         # ── Mission state ───────────────────────────────────────────────────
         self._state: str = 'WAIT_NAV_READY'
         # Scan bookkeeping
         self._scan_idx: int = 0
-        self._scan_yaw_start: float = 0.0  # absolute yaw at scan idx=0
-        self._scan_stop_entered: float = 0.0  # wall time we set this stop's yaw
+        self._scan_yaw_start: float = 0.0       # absolute yaw at scan idx=0
+        self._scan_target_yaw: float = 0.0      # absolute target yaw for current quadrant
+        self._scan_stop_entered: float = 0.0    # wall time we set this stop's yaw
+        # Lock + confirmation bookkeeping (reset per quadrant)
+        self._quadrant_locked: bool = False
+        self._lock_time: float = 0.0
+        self._still_ticks: int = 0
+        self._detection_count: int = 0
+        self._negative_count: int = 0
+        self._last_detection: Optional[dict] = None
+        self._last_detection_stamp: float = 0.0  # detection stamp we've already counted
         # Approach bookkeeping
         self._goal_world: Optional[tuple[float, float]] = None
         self._goal_sent_time: float = 0.0
@@ -140,7 +161,7 @@ class MissionStateMachine(Node):
             VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1',
             self._pos_cb, PX4_QOS)
         self.create_subscription(
-            VehicleAttitude, '/fmu/out/vehicle_attitude',
+            VehicleAttitude, '/fmu/out/vehicle_attitude_v1',
             self._att_cb, PX4_QOS)
 
         # ── 10 Hz tick ──────────────────────────────────────────────────────
@@ -170,10 +191,20 @@ class MissionStateMachine(Node):
 
     def _att_cb(self, msg: VehicleAttitude) -> None:
         # PX4 VehicleAttitude.q is [w, x, y, z]
-        self._yaw = quat_to_yaw(
+        new_yaw = quat_to_yaw(
             float(msg.q[0]), float(msg.q[1]),
             float(msg.q[2]), float(msg.q[3]),
         )
+        now = time.time()
+        if self._prev_yaw is not None and now > self._prev_yaw_stamp:
+            dt = now - self._prev_yaw_stamp
+            # Shortest-arc yaw difference (handles ±π wrap)
+            d = new_yaw - self._prev_yaw
+            d = math.atan2(math.sin(d), math.cos(d))
+            self._yaw_rate = d / dt
+        self._prev_yaw = new_yaw
+        self._prev_yaw_stamp = now
+        self._yaw = new_yaw
 
     def _echo_state(self) -> None:
         m = String()
@@ -201,29 +232,6 @@ class MissionStateMachine(Node):
         ps.pose.position.z = 0.0
         ps.pose.orientation.w = 1.0
         self._pub_goal.publish(ps)
-
-    def _confident_detection(self) -> Optional[dict]:
-        """
-        Return a copy of the latest bbox iff it's fresh, detected=true,
-        and has a usable depth. Otherwise None.
-        """
-        with self._bbox_lock:
-            bbox = self._bbox
-            stamp = self._bbox_stamp
-        if bbox is None:
-            return None
-        if time.time() - stamp > DETECTION_FRESH_SEC:
-            return None
-        if not bbox.get('detected', False):
-            return None
-        depth_m = bbox.get('depth_m')
-        if depth_m is None:
-            return None
-        if not (MIN_DEPTH_M <= float(depth_m) <= MAX_DEPTH_M):
-            return None
-        if bbox.get('x_m') is None or bbox.get('z_m') is None:
-            return None
-        return dict(bbox)
 
     def _project_to_world(self, bbox: dict) -> Optional[tuple[float, float]]:
         """
@@ -280,45 +288,136 @@ class MissionStateMachine(Node):
     # ── State: SCAN ──────────────────────────────────────────────────────────
 
     def _enter_scan_stop(self) -> None:
+        """Begin a new quadrant: set yaw target, reset lock/confirmation state."""
         target_yaw = self._scan_yaw_start + self._scan_idx * SCAN_YAW_STEP
-        # Wrap to [-pi, pi] for tidy logging; PX4 accepts any value.
         wrapped = math.atan2(math.sin(target_yaw), math.cos(target_yaw))
+        self._scan_target_yaw = wrapped
         self._publish_yaw_cmd(wrapped)
         self._scan_stop_entered = time.time()
+        # Reset lock + confirmation tracking for this quadrant.
+        self._quadrant_locked = False
+        self._lock_time = 0.0
+        self._still_ticks = 0
+        self._detection_count = 0
+        self._negative_count = 0
+        self._last_detection = None
+        self._last_detection_stamp = 0.0
         self.get_logger().info(
-            f'Scan stop {self._scan_idx + 1}/{SCAN_STEPS} — yaw target {math.degrees(wrapped):+.1f}°.')
+            f'Quadrant {self._scan_idx + 1}/{SCAN_STEPS} — rotating to '
+            f'yaw target {math.degrees(wrapped):+.1f}°.')
+
+    def _advance_quadrant(self, reason: str) -> None:
+        """Move to next quadrant or end the scan."""
+        self.get_logger().info(
+            f'Quadrant {self._scan_idx + 1} done ({reason}).')
+        self._scan_idx += 1
+        if self._scan_idx >= SCAN_STEPS:
+            self.get_logger().warn(
+                'Completed full 360° scan with no confirmed detection — SCAN_FAILED.')
+            self._release_yaw()
+            self._state = 'SCAN_FAILED'
+            return
+        self._enter_scan_stop()
 
     def _do_scan(self) -> None:
-        elapsed = time.time() - self._scan_stop_entered
+        now = time.time()
 
-        # Keep republishing the yaw command so slam_nav's HOLD setpoint
-        # carries it (slam_nav stores the last value, but republishing
-        # makes us robust to a dropped message).
-        target_yaw = self._scan_yaw_start + self._scan_idx * SCAN_YAW_STEP
-        self._publish_yaw_cmd(
-            math.atan2(math.sin(target_yaw), math.cos(target_yaw)))
+        # Always republish the yaw command (robust to dropped messages).
+        self._publish_yaw_cmd(self._scan_target_yaw)
 
-        # After settle, check for a confident detection.
-        if elapsed >= SCAN_SETTLE_SEC:
-            det = self._confident_detection()
-            if det is not None:
+        # ── Phase A: rotating into lock ─────────────────────────────────────
+        if not self._quadrant_locked:
+            # Yaw error to target (shortest arc).
+            err = math.atan2(
+                math.sin(self._scan_target_yaw - self._yaw),
+                math.cos(self._scan_target_yaw - self._yaw),
+            )
+            if (abs(err) < YAW_LOCK_TOLERANCE
+                    and abs(self._yaw_rate) < YAW_RATE_THRESH):
+                self._still_ticks += 1
+            else:
+                self._still_ticks = 0
+
+            if self._still_ticks >= YAW_STILL_TICKS:
+                self._quadrant_locked = True
+                self._lock_time = now
                 self.get_logger().info(
-                    f'Detection at scan stop {self._scan_idx + 1}: '
-                    f'depth={det["depth_m"]:.2f}m  cam_fwd={det["z_m"]:.2f}m  '
-                    f'cam_right={det["x_m"]:.2f}m — transitioning to APPROACH.')
-                self._begin_approach(det)
+                    f'Quadrant {self._scan_idx + 1} LOCKED at '
+                    f'yaw {math.degrees(self._yaw):+.1f}° — collecting inferences.')
                 return
 
-        # Stop expired — advance.
-        if elapsed >= SCAN_DWELL_SEC:
-            self._scan_idx += 1
-            if self._scan_idx >= SCAN_STEPS:
-                self.get_logger().warn(
-                    'Completed full 360° scan with no detection — SCAN_FAILED.')
-                self._release_yaw()
-                self._state = 'SCAN_FAILED'
-                return
-            self._enter_scan_stop()
+            # Lock timeout — drone never settled. Move on rather than hang.
+            if now - self._scan_stop_entered > YAW_LOCK_TIMEOUT:
+                self._advance_quadrant(reason='yaw lock timeout')
+            return
+
+        # ── Phase B: locked — track consecutive streaks ─────────────────────
+        # Inference frames arrive ~1 Hz. Each NEW frame is classified as
+        # positive (confident detection) or negative (no detection / bad
+        # depth). Streaks reset on the opposite class:
+        #   3 consecutive positives  → commit, use frame 3's coords
+        #   3 consecutive negatives  → advance to next quadrant
+        with self._bbox_lock:
+            bbox = self._bbox
+            stamp = self._bbox_stamp
+
+        is_new = (bbox is not None
+                  and stamp > self._last_detection_stamp
+                  and now - stamp < DETECTION_FRESH_SEC)
+
+        if is_new:
+            self._last_detection_stamp = stamp
+            if self._is_confident(bbox):
+                self._detection_count += 1
+                self._negative_count = 0
+                self._last_detection = dict(bbox)
+                self.get_logger().info(
+                    f'Quadrant {self._scan_idx + 1} — positive '
+                    f'{self._detection_count}/{REQUIRED_DETECTIONS} '
+                    f'(depth={bbox["depth_m"]:.2f}m).')
+
+                if self._detection_count >= REQUIRED_DETECTIONS:
+                    self.get_logger().info(
+                        f'Quadrant {self._scan_idx + 1} CONFIRMED — '
+                        f'using final inference for nav goal.')
+                    self._begin_approach(self._last_detection)
+                    return
+            else:
+                self._negative_count += 1
+                # A negative breaks any positive streak in progress.
+                if self._detection_count > 0:
+                    self.get_logger().info(
+                        f'Quadrant {self._scan_idx + 1} — negative '
+                        f'(positive streak of {self._detection_count} broken).')
+                    self._detection_count = 0
+                else:
+                    self.get_logger().info(
+                        f'Quadrant {self._scan_idx + 1} — negative '
+                        f'{self._negative_count}/{REQUIRED_NEGATIVES}.')
+
+                if self._negative_count >= REQUIRED_NEGATIVES:
+                    self._advance_quadrant(
+                        reason=f'{REQUIRED_NEGATIVES} consecutive negatives')
+                    return
+
+        # Backstop: advance if too much time has elapsed at this quadrant.
+        if now - self._lock_time > INFERENCE_TIMEOUT_SEC:
+            self._advance_quadrant(
+                reason=f'inference timeout '
+                       f'(pos={self._detection_count}, neg={self._negative_count})')
+
+    def _is_confident(self, bbox: dict) -> bool:
+        """Detection has detected=true + valid depth in working range."""
+        if not bbox.get('detected', False):
+            return False
+        depth_m = bbox.get('depth_m')
+        if depth_m is None:
+            return False
+        if not (MIN_DEPTH_M <= float(depth_m) <= MAX_DEPTH_M):
+            return False
+        if bbox.get('x_m') is None or bbox.get('z_m') is None:
+            return False
+        return True
 
     # ── State: APPROACH ──────────────────────────────────────────────────────
 

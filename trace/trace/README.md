@@ -27,22 +27,22 @@ if the drone is not ready for takeoff after these commands, set the following pa
 >cd ~/TRACE
 >colcon build
 >source install/setup.bash
->ros2 run trace_mapping mapping
+>ros2 run trace mapping
 
 ## Terminal 4
 >cd ~/TRACE
 >source install/setup.bash
->ros2 run trace_mapping bbox
+>ros2 run trace bbox
 
 ## Terminal 5
 >cd ~/TRACE
 >source install/setup.bash
->ros2 run trace_mapping visualizer
+>ros2 run trace visualizer
 
 ## Terminal 6
 >cd ~/TRACE
 >source install/setup.bash
->ros2 run trace_mapping nav
+>ros2 run trace nav
 
 ## Terminal 7
 >rviz2
@@ -51,4 +51,4 @@ Then add topic -> occupancy grid map
 ## Terminal 8
 >cd ~/TRACE
 >source install/setup.bash
->ros2 run trace_mapping mission
+>ros2 run trace pipeline
