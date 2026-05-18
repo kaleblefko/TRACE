@@ -8,10 +8,12 @@ object_detector.py.
 State flow
 ──────────
   WAIT_NAV_READY  — wait until slam_nav reports HOLD (takeoff complete).
-  SCAN            — rotate through 8 yaw stops (45° each). At each stop,
-                    hold for SCAN_DWELL_SEC and listen for /detection/bbox
-                    with detected=true AND a valid depth. First confident
-                    detection breaks out.
+  SCAN            — rotate through 8 yaw stops (45° each). At each stop:
+                      1. Rotate to target yaw, wait for the drone to settle
+                         (heading + yaw rate both stable for several ticks).
+                      2. Once locked, watch /detection/bbox frame-by-frame.
+                         3 consecutive positives → commit (use last frame's
+                         coords). 3 consecutive negatives → next quadrant.
   APPROACH        — project the camera-frame detection (x_m right, z_m fwd)
                     into world NED using the drone's pose+yaw snapshotted
                     at the moment of detection, publish /nav_goal, then
@@ -67,13 +69,13 @@ YAW_STILL_TICKS     = 5                  # consecutive 10Hz ticks below thresh
 YAW_LOCK_TIMEOUT    = 6.0                # s, give up trying to lock and move on
 
 # Inference confirmation parameters
-INFERENCE_TIMEOUT_SEC = 15.0             # max time per quadrant after lock (backstop)
-REQUIRED_DETECTIONS   = 3                # consecutive detected=true to commit
-REQUIRED_NEGATIVES    = 3                # consecutive detected=false to advance
-DETECTION_FRESH_SEC   = 1.0              # bbox older than this is stale
-MIN_DEPTH_M           = 0.4              # closer than this is unreliable
-MAX_DEPTH_M           = 15.0             # farther than this is unreliable
-NAV_ARRIVED_RADIUS    = 0.40             # m, additional sanity check
+# Inference confirmation parameters
+INFERENCE_FRAME_BUDGET = 12              # max frames per quadrant after lock (backstop)
+REQUIRED_DETECTIONS    = 3               # consecutive detected=true to commit
+REQUIRED_NEGATIVES     = 3               # consecutive detected=false to advance
+MIN_DEPTH_M            = 0.4             # closer than this is unreliable
+MAX_DEPTH_M            = 15.0            # farther than this is unreliable
+NAV_ARRIVED_RADIUS     = 0.40            # m, additional sanity check
 
 # Camera mount: detector reports camera-frame x=right, y=down, z=forward.
 # The drone body is FRD (forward-right-down). For a forward-facing camera
@@ -140,6 +142,7 @@ class MissionStateMachine(Node):
         self._still_ticks: int = 0
         self._detection_count: int = 0
         self._negative_count: int = 0
+        self._frames_since_lock: int = 0
         self._last_detection: Optional[dict] = None
         self._last_detection_stamp: float = 0.0  # detection stamp we've already counted
         # Approach bookkeeping
@@ -300,6 +303,7 @@ class MissionStateMachine(Node):
         self._still_ticks = 0
         self._detection_count = 0
         self._negative_count = 0
+        self._frames_since_lock = 0
         self._last_detection = None
         self._last_detection_stamp = 0.0
         self.get_logger().info(
@@ -352,21 +356,24 @@ class MissionStateMachine(Node):
             return
 
         # ── Phase B: locked — track consecutive streaks ─────────────────────
-        # Inference frames arrive ~1 Hz. Each NEW frame is classified as
-        # positive (confident detection) or negative (no detection / bad
-        # depth). Streaks reset on the opposite class:
+        # Each new inference frame is classified as positive (confident
+        # detection) or negative. Streaks reset on the opposite class:
         #   3 consecutive positives  → commit, use frame 3's coords
         #   3 consecutive negatives  → advance to next quadrant
+        # All budgets are FRAME-based, not time-based, so this scales with
+        # whatever inference rate Ollama happens to deliver.
         with self._bbox_lock:
             bbox = self._bbox
             stamp = self._bbox_stamp
 
-        is_new = (bbox is not None
-                  and stamp > self._last_detection_stamp
-                  and now - stamp < DETECTION_FRESH_SEC)
+        # A new frame is simply one we haven't counted yet — identified by
+        # a stamp newer than the last we processed.
+        is_new = bbox is not None and stamp > self._last_detection_stamp
 
         if is_new:
             self._last_detection_stamp = stamp
+            self._frames_since_lock += 1
+
             if self._is_confident(bbox):
                 self._detection_count += 1
                 self._negative_count = 0
@@ -374,7 +381,7 @@ class MissionStateMachine(Node):
                 self.get_logger().info(
                     f'Quadrant {self._scan_idx + 1} — positive '
                     f'{self._detection_count}/{REQUIRED_DETECTIONS} '
-                    f'(depth={bbox["depth_m"]:.2f}m).')
+                    f'(frame {self._frames_since_lock}, depth={bbox["depth_m"]:.2f}m).')
 
                 if self._detection_count >= REQUIRED_DETECTIONS:
                     self.get_logger().info(
@@ -384,26 +391,29 @@ class MissionStateMachine(Node):
                     return
             else:
                 self._negative_count += 1
-                # A negative breaks any positive streak in progress.
                 if self._detection_count > 0:
                     self.get_logger().info(
                         f'Quadrant {self._scan_idx + 1} — negative '
-                        f'(positive streak of {self._detection_count} broken).')
+                        f'(frame {self._frames_since_lock}, '
+                        f'positive streak of {self._detection_count} broken).')
                     self._detection_count = 0
                 else:
                     self.get_logger().info(
                         f'Quadrant {self._scan_idx + 1} — negative '
-                        f'{self._negative_count}/{REQUIRED_NEGATIVES}.')
+                        f'{self._negative_count}/{REQUIRED_NEGATIVES} '
+                        f'(frame {self._frames_since_lock}).')
 
                 if self._negative_count >= REQUIRED_NEGATIVES:
                     self._advance_quadrant(
                         reason=f'{REQUIRED_NEGATIVES} consecutive negatives')
                     return
 
-        # Backstop: advance if too much time has elapsed at this quadrant.
-        if now - self._lock_time > INFERENCE_TIMEOUT_SEC:
+        # Backstop: advance if we've burned through the frame budget without
+        # either streak completing. Protects against a stuck VLM or a target
+        # that keeps flickering pos/neg/pos/neg indefinitely.
+        if self._frames_since_lock >= INFERENCE_FRAME_BUDGET:
             self._advance_quadrant(
-                reason=f'inference timeout '
+                reason=f'frame budget exhausted '
                        f'(pos={self._detection_count}, neg={self._negative_count})')
 
     def _is_confident(self, bbox: dict) -> bool:
