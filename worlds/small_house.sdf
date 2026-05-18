@@ -510,8 +510,8 @@
 
     <!-- Drone Include -->
     <include>
-        <uri>model://x500_mono_cam_down</uri>
-        <name>x500_mono_cam_down_0</name>
+        <uri>model://trace_drone</uri>
+        <name>trace_drone_0</name>
         <pose>0 0 1 0 0 0</pose>
     </include>
 
