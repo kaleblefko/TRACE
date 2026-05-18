@@ -113,7 +113,7 @@ class ObjectDetectorNode(Node):
         load_dotenv(dotenv_path=env_path)
 
         self._ollama_endpoint: str = os.getenv('OLLAMA_ENDPOINT', 'localhost:11434')
-        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'qwen3-vl:2b-instruct')
+        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'qwen3-vl:4b-instruct')
         self._api_url: str = f"http://{self._ollama_endpoint}/api/chat"
 
         # ── Shared state ─────────────────────────────────────────────────────
