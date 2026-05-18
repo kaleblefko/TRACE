@@ -345,6 +345,12 @@ class MissionStateMachine(Node):
             if self._still_ticks >= YAW_STILL_TICKS:
                 self._quadrant_locked = True
                 self._lock_time = now
+                # Discard any inference message that arrived during rotation
+                # (or before we got here) by advancing the cursor to the
+                # current latest. Only messages received from THIS POINT
+                # FORWARD will count toward the streak.
+                with self._bbox_lock:
+                    self._last_detection_stamp = self._bbox_stamp
                 self.get_logger().info(
                     f'Quadrant {self._scan_idx + 1} LOCKED at '
                     f'yaw {math.degrees(self._yaw):+.1f}° — collecting inferences.')
@@ -373,6 +379,16 @@ class MissionStateMachine(Node):
         if is_new:
             self._last_detection_stamp = stamp
             self._frames_since_lock += 1
+
+            # The first inference message received after lock was captured
+            # while the drone was still rotating (inference takes several
+            # seconds; whatever publishes first was started before we
+            # locked). Skip it.
+            if self._frames_since_lock == 1:
+                self.get_logger().info(
+                    f'Quadrant {self._scan_idx + 1} — discarding first '
+                    f'post-lock frame (captured during rotation).')
+                return
 
             if self._is_confident(bbox):
                 self._detection_count += 1
