@@ -43,8 +43,8 @@ from gz.transport13 import Node as GzNode
 CAM_W:  int = 640
 CAM_H:  int = 480
 
-RGB_TOPIC = (
-    '/world/small_house/model/trace_drone_0'
+RGB_TOPIC_TEMPLATE = (
+    '/world/{world}/model/trace_drone_0'
     '/model/depth_cam/link/camera_link/sensor/IMX214/image'
 )
 
@@ -79,8 +79,11 @@ class DetectionVisualizerNode(Node):
         self._target_label: str = DEFAULT_TARGET_LABEL
 
         # ── gz-transport RGB subscriber ───────────────────────────────────────
+        self.declare_parameter('gz_world_name', 'small_house')
+        gz_world = self.get_parameter('gz_world_name').get_parameter_value().string_value
+        rgb_topic = RGB_TOPIC_TEMPLATE.format(world=gz_world)
         self._gz_node = GzNode()
-        self._gz_node.subscribe(GzImage, RGB_TOPIC, self._rgb_cb)
+        self._gz_node.subscribe(GzImage, rgb_topic, self._rgb_cb)
 
         # ── ROS 2 subscribers ─────────────────────────────────────────────────
         self.create_subscription(String, '/detection/bbox',    self._bbox_cb,       10)

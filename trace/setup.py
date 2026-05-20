@@ -10,7 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/trace.launch.py']),
+        ('share/' + package_name + '/launch', [
+            'launch/trace.launch.py',
+            'launch/eval.launch.py',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,7 +34,8 @@ setup(
             'visualizer = trace.detection_visualizer:main',
             'nav = trace.nav:main',
             'pipeline = trace.state_machine:main',
-            'text_input = trace.text_input:main'
+            'text_input = trace.text_input:main',
+            'eval = trace.eval_pipeline:main'
         ],
     },
 )

@@ -35,6 +35,7 @@ import math
 import os
 import re
 import threading
+import time
 from typing import Optional
 
 import cv2
@@ -112,7 +113,7 @@ class ObjectDetectorNode(Node):
         load_dotenv(dotenv_path=env_path)
 
         self._ollama_endpoint: str = os.getenv('OLLAMA_ENDPOINT', 'localhost:11434')
-        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'qwen3-vl:4b-instruct')
+        self._ollama_model:    str = os.getenv('OLLAMA_MODEL',    'gemma3:4b')
         self._api_url: str = f"http://{self._ollama_endpoint}/api/chat"
 
         # ── Shared state ─────────────────────────────────────────────────────
@@ -137,8 +138,14 @@ class ObjectDetectorNode(Node):
         self.create_subscription(String, '/mission/new_target', self._new_target_cb, 10)
 
         # ── gz-transport subscriptions ────────────────────────────────────────
+        self.declare_parameter('gz_world_name', 'small_house')
+        gz_world = self.get_parameter('gz_world_name').get_parameter_value().string_value
+        rgb_topic = (
+            f'/world/{gz_world}/model/trace_drone_0'
+            f'/model/depth_cam/link/camera_link/sensor/IMX214/image'
+        )
         self._gz_node = GzNode()
-        self._gz_node.subscribe(GzImage, RGB_TOPIC,   self._rgb_cb)
+        self._gz_node.subscribe(GzImage, rgb_topic,   self._rgb_cb)
         self._gz_node.subscribe(GzImage, DEPTH_TOPIC, self._depth_cb)
 
         # ── 5 Hz inference trigger ───────────────────────────────────────────
@@ -234,6 +241,7 @@ class ObjectDetectorNode(Node):
             }
 
             self.get_logger().info(f'Sending RGB frame to {self._ollama_model}...')
+            t_inf_start = time.perf_counter()
             response = requests.post(
                 self._api_url, json=payload, stream=True, timeout=30
             )
@@ -251,6 +259,7 @@ class ObjectDetectorNode(Node):
                         break
                 except json.JSONDecodeError:
                     continue
+            inference_ms = (time.perf_counter() - t_inf_start) * 1000.0
 
             self.get_logger().info(f'VLM raw reply: {full_reply[:200]}')
 
@@ -313,6 +322,7 @@ class ObjectDetectorNode(Node):
                 })
                 self.get_logger().info(f'"{target}" not detected in frame')
 
+            bbox['inference_ms'] = round(inference_ms, 1)
             self._last_result = bbox
 
             # ── 6. Publish ───────────────────────────────────────────────────
@@ -368,7 +378,7 @@ class ObjectDetectorNode(Node):
         if bbox['detected']:
             x1, y1, x2, y2 = bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2']
             depth_str = f" {bbox['depth_m']:.2f}m" if bbox.get('depth_m') is not None else ''
-            text = f'{bbox.get("label", TARGET_LABEL)}{depth_str}'
+            text = f'{bbox.get("label", DEFAULT_TARGET_LABEL)}{depth_str}'
             cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
             (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
             cv2.rectangle(vis, (x1, y1 - th - 6), (x1 + tw + 4, y1), (0, 255, 0), -1)
